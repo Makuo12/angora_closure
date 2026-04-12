@@ -1,0 +1,9 @@
+services:
+  dfsan:
+    build:
+      context: .
+      args:
+        platform: linux/amd64
+    platform: linux/amd64
+    stdin_open: true
+    tty: true
