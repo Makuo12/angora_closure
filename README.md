@@ -8,12 +8,6 @@ This is achieved using an LLVM pass that replaces the target program’s `main` 
 
 To address inconsistent program states caused by persistent fuzzing, this project introduces **ClosureX**. ClosureX logs changes to the program state during execution (e.g., modified global variables) and restores them before executing the next test case.
 
----
-
-Here’s the revised README version with that clarification:
-
----
-
 ## Design
 
 ClosureX is integrated with Angora by introducing a custom entry point that replaces the target program’s original `main`.
@@ -135,4 +129,3 @@ It currently only works with the xpdf source code. Using other source code would
 * **ClosureX: Compiler Support for Correct Persistent Fuzzing**  
   Rishi Ranjan, Ian Paterson, Matthew Hicks  
   [Read Paper](https://dl.acm.org/doi/pdf/10.1145/3669940.3707281)
-  
