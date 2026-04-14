@@ -136,7 +136,6 @@ void set_crash_handler(void)
     sigaction(SIGTRAP, &sa, NULL);
     sigaction(SIGILL, &sa, NULL);
 
-    /* FIX 6: SIGABRT is NOT caught here.
     // sigaction(SIGABRT, &sa, NULL);
 }
 
