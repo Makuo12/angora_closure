@@ -1,5 +1,7 @@
+use super::{limit::SetLimit, *};
+
 use crate::{
-    branches, command::{self, CommandOpt}, cond_stmt::{self, NextState, ShmConds}, depot::{self, Depot}, executor::{StatusType, limit::SetLimit, pipe_fd::PipeFd}, handle_closure_reset, handle_fuzz, stats::{self, ChartStats, LocalStats, TimeIns}, track::{self, load_track_data}
+    branches, close_open_file_handles, command, cond_stmt::{self, NextState}, depot, executor::pipe_fd::PipeFd, free_ptrs, handle_closure_reset, handle_fuzz, set_angora_area_ptr, stats, track
 };
 use angora_common::{config, defs};
 
@@ -11,29 +13,32 @@ use std::{
 use wait_timeout::ChildExt;
 
 pub struct Executor {
-    pub cmd: CommandOpt,
-    pub has_new_path: bool,
-    pub t_conds: ShmConds,
+    pub cmd: command::CommandOpt,
     pub branches: branches::Branches,
-    pub local_stats: LocalStats,
+    pub t_conds: cond_stmt::ShmConds,
+    envs: HashMap<String, String>,
+    depot: Arc<depot::Depot>,
     fd: PipeFd,
     tmout_cnt: usize,
-    envs: HashMap<String, String>,
-    pub invariable_cnt: usize,
+    invariable_cnt: usize,
     pub last_f: u64,
-    depot: Arc<Depot>,
-    pub global_stats: Arc<RwLock<ChartStats>>,
+    pub has_new_path: bool,
+    pub global_stats: Arc<RwLock<stats::ChartStats>>,
+    pub local_stats: stats::LocalStats,
 }
 
 impl Executor {
     pub fn new(
-        cmd: CommandOpt,
+        cmd: command::CommandOpt,
         global_branches: Arc<branches::GlobalBranches>,
-        depot: Arc<Depot>,
-        global_stats: Arc<RwLock<ChartStats>>,
+        depot: Arc<depot::Depot>,
+        global_stats: Arc<RwLock<stats::ChartStats>>,
     ) -> Self {
-        let t_conds = ShmConds::new();
-        let branches = branches::Branches::new(global_branches);
+        // ** Share Memory **
+        let mut branches = branches::Branches::new(global_branches);
+        let t_conds = cond_stmt::ShmConds::new();
+
+        // ** Envs **
         let mut envs = HashMap::new();
         envs.insert(
             defs::ASAN_OPTIONS_VAR.to_string(),
@@ -55,188 +60,37 @@ impl Executor {
             defs::LD_LIBRARY_PATH_VAR.to_string(),
             cmd.ld_library.clone(),
         );
-        let fd = PipeFd::new(&cmd.out_file);
+        
+        let shm_id = branches.get_id();
+        let trace_ptr = branches.get_trace_ptr();
+        
+        println!("[Executor::new] shm_id={}, trace_ptr={:p}", shm_id, trace_ptr);
+        
+        unsafe { set_angora_area_ptr(trace_ptr) };
+        
+        println!("[Executor::new] __angora_area_ptr overridden successfully");
+        let fd = pipe_fd::PipeFd::new(&cmd.out_file);
+
         Self {
-            has_new_path: false,
+            cmd,
             branches,
-            depot,
-            envs,
             t_conds,
+            envs,
+            // forksrv,
+            depot,
+            fd,
             tmout_cnt: 0,
-            global_stats,
-            local_stats: LocalStats::default(),
             invariable_cnt: 0,
             last_f: defs::UNREACHABLE,
-            cmd,
-            fd,
+            has_new_path: false,
+            global_stats,
+            local_stats: Default::default(),
         }
     }
-    fn run_init(&mut self) {
-        self.has_new_path = false;
-    }
-    pub fn run_with_cond(
-        &mut self,
-        buf: &Vec<u8>,
-        cond: &mut cond_stmt::CondStmt,
-    ) -> (StatusType, u64) {
-        self.run_init();
-        self.t_conds.set(cond);
-        let mut status = self.run_inner(buf);
-        let output = self.t_conds.get_cond_output();
-        let mut explored = false;
-        let mut skip = false;
-        skip |= self.check_explored(cond, status, output, &mut explored);
-        skip |= self.check_invariable(output, cond);
-        self.check_consistent(output, cond);
-        self.do_if_has_new(buf, status, explored, cond.base.cmpid);
-        status = self.check_timeout(status, cond);
 
-        if skip {
-            status = StatusType::Skip;
-        }
 
-        (status, output)
-    }
-    pub fn run_sync(&mut self, buf: &Vec<u8>) {
-        self.run_init();
-        let status = self.run_inner(buf);
-        self.do_if_has_new(buf, status, false, 0);
-    }
-    fn check_timeout(&mut self, status: StatusType, cond: &mut cond_stmt::CondStmt) -> StatusType {
-        // let mut ret_status = status;
-        // if ret_status == StatusType::Error {
-        //     self.rebind_forksrv();
-        //     ret_status = StatusType::Timeout;
-        // }
-
-        // if ret_status == StatusType::Timeout {
-        //     self.tmout_cnt = self.tmout_cnt + 1;
-        //     if self.tmout_cnt >= config::TMOUT_SKIP {
-        //         cond.to_timeout();
-        //         ret_status = StatusType::Skip;
-        //         self.tmout_cnt = 0;
-        //     }
-        // } else {
-        //     self.tmout_cnt = 0;
-        // };
-
-        // ret_status
-        StatusType::Crash
-    }
-    fn run_inner(&mut self, buf: &Vec<u8>) -> StatusType {
-        self.write_test(buf);
-        self.branches.clear_trace();
-        compiler_fence(Ordering::SeqCst);
-        // Path to fast fuzzer without taint tracking.
-        let ret_status = self.call_fuzzer();
-        compiler_fence(Ordering::SeqCst);
-        ret_status
-    }
-    fn call_fuzzer(&mut self) -> StatusType {
-        let ret_status: i32;
-        let main_cstr = CString::new(self.cmd.main.0.as_str()).unwrap();
-        let out_cstr = CString::new(self.cmd.out_file.as_str()).unwrap();
-        let mut args: Vec<*mut c_char> = vec![
-            main_cstr.as_ptr() as *mut c_char,
-            out_cstr.as_ptr() as *mut c_char,
-            std::ptr::null_mut(),
-        ];
-        let argv: *mut *mut c_char = args.as_mut_ptr();
-        let argc: c_int = (args.len() - 1) as c_int;
-        unsafe {
-            let result = handle_fuzz(argc, argv);
-            ret_status = result
-        }
-        unsafe { handle_closure_reset() };
-        return StatusType::from_handle_fuzz(ret_status);
-    }
-    fn do_if_has_new(&mut self, buf: &Vec<u8>, status: StatusType, _explored: bool, cmpid: u32) {
-        // new edge: one byte in bitmap
-        let (has_new_path, has_new_edge, edge_num) = self.branches.has_new(status);
-        if has_new_path {
-            self.has_new_path = true;
-            self.local_stats.find_new(&status);
-            let id = self.depot.save(status, &buf, cmpid);
-            if status == StatusType::Normal {
-                self.local_stats.avg_edge_num.update(edge_num as f32);
-                let speed = self.count_time();
-                let speed_ratio = self.local_stats.avg_exec_time.get_ratio(speed as f32);
-                self.local_stats.avg_exec_time.update(speed as f32);
-
-                // Avoid track slow ones
-                if (!has_new_edge && speed_ratio > 10 && id > 10) || (speed_ratio > 25 && id > 10) {
-                    println!(
-                        "Skip tracking id {}, speed: {}, speed_ratio: {}, has_new_edge: {}",
-                        id, speed, speed_ratio, has_new_edge
-                    );
-                    return;
-                }
-                let crash_or_tmout = self.try_unlimited_memory(buf, cmpid);
-                if !crash_or_tmout {
-                    let cond_stmts = self.track(id, buf, speed);
-                    if cond_stmts.len() > 0 {
-                        self.depot.add_entries(cond_stmts);
-                        // if self.cmd.enable_afl {
-                        //     self.depot
-                        //         .add_entries(vec![cond_stmt::CondStmt::get_afl_cond(
-                        //             id, speed, edge_num,
-                        //         )]);
-                        // }
-                    }
-                }
-            }
-        }
-    }
-    fn count_time(&mut self) -> u32 {
-        let t_start = time::Instant::now();
-        for _ in 0..3 {
-            // if self.cmd.is_stdin {
-            //     self.fd.rewind();
-            // }
-            // self.run_target(&main_path, self.cmd.mem_limit, self.cmd.time_limit);
-            let _ = self.call_fuzzer();
-        }
-        let used_t = t_start.elapsed();
-        let used_us = (used_t.as_secs() as u32 * 1000_000) + used_t.subsec_nanos() / 1_000;
-        used_us / 3
-    }
-    fn try_unlimited_memory(&mut self, buf: &Vec<u8>, cmpid: u32) -> bool {
-        let mut skip = false;
-        self.branches.clear_trace();
-        // Not need we are not reading from stdin.
-        // if self.cmd.is_stdin {
-        //     self.fd.rewind();
-        // }
-        compiler_fence(Ordering::SeqCst);
-        // Call main
-        // let unmem_status = self.run_target(&main_path, config::MEM_LIMIT_TRACK, self.cmd.time_limit);
-        let unmem_status = self.call_fuzzer();
-
-        compiler_fence(Ordering::SeqCst);
-        // find difference
-        if unmem_status != StatusType::Normal {
-            skip = true;
-            warn!(
-                "Behavior changes if we unlimit memory!! status={:?}",
-                unmem_status
-            );
-            // crash or hang
-            if self.branches.has_new(unmem_status).0 {
-                self.depot.save(unmem_status, &buf, cmpid);
-            }
-        }
-        skip
-    }
-    pub fn run(&mut self, buf: &Vec<u8>, cond: &mut cond_stmt::CondStmt) -> StatusType {
-        self.run_init();
-        let status = self.run_inner(buf);
-        self.do_if_has_new(buf, status, false, 0);
-        self.check_timeout(status, cond)
-    }
+    // FIXME: The location id may be inconsistent between track and fast programs.
     fn check_consistent(&self, output: u64, cond: &mut cond_stmt::CondStmt) {
-        // This function checks if the branch is "fuzzable" under current conditions.
-        // The Logic: If the very first time (num_exec == 1) we run the program, the distance is UNREACHABLE,
-        // something is wrong.
         if output == defs::UNREACHABLE
             && cond.is_first_time()
             && self.local_stats.num_exec == 1.into()
@@ -246,6 +100,7 @@ impl Executor {
             warn!("inconsistent : {:?}", cond);
         }
     }
+
     fn check_invariable(&mut self, output: u64, cond: &mut cond_stmt::CondStmt) -> bool {
         let mut skip = false;
         if output == self.last_f {
@@ -266,6 +121,7 @@ impl Executor {
         self.last_f = output;
         skip
     }
+
     fn check_explored(
         &self,
         cond: &mut cond_stmt::CondStmt,
@@ -285,15 +141,204 @@ impl Executor {
         }
         skip
     }
+
+    pub fn run_with_cond(
+        &mut self,
+        buf: &Vec<u8>,
+        cond: &mut cond_stmt::CondStmt,
+    ) -> (StatusType, u64) {
+        self.run_init();
+        self.t_conds.set(cond);
+        let mut status = self.run_inner(buf);
+
+        let output = self.t_conds.get_cond_output();
+        let mut explored = false;
+        let mut skip = false;
+        skip |= self.check_explored(cond, status, output, &mut explored);
+        skip |= self.check_invariable(output, cond);
+        self.check_consistent(output, cond);
+
+        self.do_if_has_new(buf, status, explored, cond.base.cmpid);
+        status = self.check_timeout(status, cond);
+
+        if skip {
+            status = StatusType::Skip;
+        }
+
+        (status, output)
+    }
+
+    fn try_unlimited_memory(&mut self, buf: &Vec<u8>, cmpid: u32) -> bool {
+        let mut skip = false;
+        self.branches.clear_trace();
+        if self.cmd.is_stdin {
+            self.fd.rewind();
+        }
+        compiler_fence(Ordering::SeqCst);
+        let unmem_status = self.call_fuzzer();
+        compiler_fence(Ordering::SeqCst);
+
+        // find difference
+        if unmem_status != StatusType::Normal {
+            skip = true;
+            warn!(
+                "Behavior changes if we unlimit memory!! status={:?}",
+                unmem_status
+            );
+            // crash or hang
+            if self.branches.has_new(unmem_status).0 {
+                self.depot.save(unmem_status, &buf, cmpid);
+            }
+        }
+        skip
+    }
+
+    fn do_if_has_new(&mut self, buf: &Vec<u8>, status: StatusType, _explored: bool, cmpid: u32) {
+        // new edge: one byte in bitmap
+        let (has_new_path, has_new_edge, edge_num) = self.branches.has_new(status);
+
+        if has_new_path {
+            self.has_new_path = true;
+            self.local_stats.find_new(&status);
+            let id = self.depot.save(status, &buf, cmpid);
+
+            if status == StatusType::Normal {
+                self.local_stats.avg_edge_num.update(edge_num as f32);
+                let speed = self.count_time();
+                let speed_ratio = self.local_stats.avg_exec_time.get_ratio(speed as f32);
+                self.local_stats.avg_exec_time.update(speed as f32);
+
+                // Avoid track slow ones
+                if (!has_new_edge && speed_ratio > 10 && id > 10) || (speed_ratio > 25 && id > 10) {
+                    warn!(
+                        "Skip tracking id {}, speed: {}, speed_ratio: {}, has_new_edge: {}",
+                        id, speed, speed_ratio, has_new_edge
+                    );
+                    return;
+                }
+                let crash_or_tmout = self.try_unlimited_memory(buf, cmpid);
+                if !crash_or_tmout {
+                    let cond_stmts = self.track(id, buf, speed);
+                    if cond_stmts.len() > 0 {
+                        self.depot.add_entries(cond_stmts);
+                        if self.cmd.enable_afl {
+                            self.depot
+                                .add_entries(vec![cond_stmt::CondStmt::get_afl_cond(
+                                    id, speed, edge_num,
+                                )]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn run(&mut self, buf: &Vec<u8>, cond: &mut cond_stmt::CondStmt) -> StatusType {
+        self.run_init();
+        let status = self.run_inner(buf);
+        self.do_if_has_new(buf, status, false, 0);
+        self.check_timeout(status, cond)
+    }
+
+    pub fn run_sync(&mut self, buf: &Vec<u8>) {
+        self.run_init();
+        let status = self.run_inner(buf);
+        self.do_if_has_new(buf, status, false, 0);
+    }
+
+    fn run_init(&mut self) {
+        self.has_new_path = false;
+        self.local_stats.num_exec.count();
+    }
+
+    fn check_timeout(&mut self, status: StatusType, cond: &mut cond_stmt::CondStmt) -> StatusType {
+        let mut ret_status = status;
+        if ret_status == StatusType::Error {
+            // self.rebind_forksrv();
+            ret_status = StatusType::Timeout;
+        }
+
+        if ret_status == StatusType::Timeout {
+            self.tmout_cnt = self.tmout_cnt + 1;
+            if self.tmout_cnt >= config::TMOUT_SKIP {
+                cond.to_timeout();
+                ret_status = StatusType::Skip;
+                self.tmout_cnt = 0;
+            }
+        } else {
+            self.tmout_cnt = 0;
+        };
+
+        ret_status
+    }
+
+    fn run_inner(&mut self, buf: &Vec<u8>) -> StatusType {
+        self.write_test(buf);
+        self.branches.clear_trace();
+        compiler_fence(Ordering::SeqCst);
+        let ret_status = self.call_fuzzer();
+        // let ret_status = if let Some(ref mut fs) = self.forksrv {
+        //     fs.run()
+        // } else {
+        //     self.run_target(&self.cmd.main, self.cmd.mem_limit, self.cmd.time_limit)
+        // };
+        compiler_fence(Ordering::SeqCst);
+
+        ret_status
+    }
+    fn call_fuzzer(&mut self) -> StatusType {
+        let ret_status: i32;
+        let main_cstr = CString::new(self.cmd.main.0.as_str()).unwrap();
+        let out_cstr = CString::new(self.cmd.out_file.as_str()).unwrap();
+        let mut args: Vec<*mut c_char> = vec![
+            main_cstr.as_ptr() as *mut c_char,
+            out_cstr.as_ptr() as *mut c_char,
+            std::ptr::null_mut(),
+        ];
+        let argv: *mut *mut c_char = args.as_mut_ptr();
+        let argc: c_int = (args.len() - 1) as c_int;
+        unsafe {
+            let result = handle_fuzz(argc, argv);
+            ret_status = result;
+        }
+        unsafe { close_open_file_handles(); };
+        unsafe { free_ptrs(); };
+        unsafe { handle_closure_reset() };
+        let status = StatusType::from_handle_fuzz(ret_status);
+        status
+    }
+    fn count_time(&mut self) -> u32 {
+        let t_start = time::Instant::now();
+        for _ in 0..3 {
+            if self.cmd.is_stdin {
+                self.fd.rewind();
+            }
+            self.call_fuzzer();
+            // if let Some(ref mut fs) = self.forksrv {
+            //     let status = fs.run();
+            //     if status == StatusType::Error {
+            //         self.rebind_forksrv();
+            //         return defs::SLOW_SPEED;
+            //     }
+            // } else {
+            //     self.run_target(&self.cmd.main, self.cmd.mem_limit, self.cmd.time_limit);
+            // }
+        }
+        let used_t = t_start.elapsed();
+        let used_us = (used_t.as_secs() as u32 * 1000_000) + used_t.subsec_nanos() / 1_000;
+        used_us / 3
+    }
+
     fn track(&mut self, id: usize, buf: &Vec<u8>, speed: u32) -> Vec<cond_stmt::CondStmt> {
         self.envs.insert(
             defs::TRACK_OUTPUT_VAR.to_string(),
             self.cmd.track_path.clone(),
         );
 
-        let t_now: TimeIns = Default::default();
+        let t_now: stats::TimeIns = Default::default();
 
         self.write_test(buf);
+
         compiler_fence(Ordering::SeqCst);
         let ret_status = self.run_target_cmd(
             &self.cmd.track,
@@ -311,42 +356,36 @@ impl Executor {
             return vec![];
         }
 
-        let cond_list = load_track_data(
+        let cond_list = track::load_track_data(
             Path::new(&self.cmd.track_path),
             id as u32,
             speed,
             self.cmd.mode.is_pin_mode(),
-            false,
+            self.cmd.enable_exploitation,
         );
 
         self.local_stats.track_time += t_now.into();
         cond_list
     }
+
+    pub fn random_input_buf(&self) -> Vec<u8> {
+        let id = self.depot.next_random();
+        self.depot.get_input_buf(id)
+    }
+
     fn write_test(&mut self, buf: &Vec<u8>) {
         self.fd.write_buf(buf);
-        // if self.cmd.is_stdin {
-        //     self.fd.rewind();
-        // }
+        if self.cmd.is_stdin {
+            self.fd.rewind();
+        }
     }
-    pub fn update_log(&mut self) {
-        self.global_stats
-            .write()
-            .unwrap()
-            .sync_from_local(&mut self.local_stats);
 
-        self.t_conds.clear();
-        self.tmout_cnt = 0;
-        self.invariable_cnt = 0;
-        self.last_f = defs::UNREACHABLE;
-    }
     fn run_target_cmd(
         &self,
         target: &(String, Vec<String>),
         mem_limit: u64,
         time_limit: u64,
     ) -> StatusType {
-        // call how own program directly from here.
-
         let mut cmd = Command::new(&target.0);
         let mut child = cmd
             .args(&target.1)
@@ -375,15 +414,27 @@ impl Executor {
                 } else {
                     StatusType::Crash
                 }
-            }
+            },
             None => {
                 // Timeout
                 // child hasn't exited yet
                 child.kill().expect("Could not send kill signal to child.");
                 child.wait().expect("Error during waiting for child.");
                 StatusType::Timeout
-            }
+            },
         };
         ret
+    }
+
+    pub fn update_log(&mut self) {
+        self.global_stats
+            .write()
+            .unwrap()
+            .sync_from_local(&mut self.local_stats);
+
+        self.t_conds.clear();
+        self.tmout_cnt = 0;
+        self.invariable_cnt = 0;
+        self.last_f = defs::UNREACHABLE;
     }
 }

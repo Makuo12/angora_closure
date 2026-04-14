@@ -1,52 +1,51 @@
-use std::{env, fs, io::Write, path::{self, PathBuf}, sync::{Arc, RwLock, atomic::AtomicBool}};
+use std::{env, fs, io::Write, path::{self, PathBuf}, sync::{Arc, RwLock, atomic::{AtomicBool, Ordering}}};
 
-use angora_common::config::MEM_LIMIT;
+use angora_common::{config::{MEM_LIMIT, TIME_LIMIT}, defs};
+use chrono::Local;
 use log::{error, info};
 use runtime::track;
 
-use crate::{branches::GlobalBranches, check_dep, command::CommandOpt, depot::{self, Depot, sync_depot}, executor::Executor, fuzz_loop::fuzz_loop, stats::ChartStats};
+use crate::{branches::{self, GlobalBranches}, check_dep, command::CommandOpt, depot::{self, Depot, sync_depot}, executor::{self, Executor}, fuzz_loop::fuzz_loop, handle_closure_init, set_crash_handler, stats::{self, ChartStats}};
 
 pub fn fuzz_init() {
-    println!("Init fuzzer");
+    pretty_env_logger::init();
+    let in_dir = "../pdf";
     let cwd = env::current_dir().unwrap();
-    let in_dir = cwd.join("../pdf");
-    let angora_out_dir = std::env::current_dir().unwrap().join("angora_out");
-    if !angora_out_dir.exists() {
-        fs::create_dir_all(&angora_out_dir).unwrap();
-    }
-    let fast_path = cwd.join("../build_fast/pdftotext").to_str().unwrap().to_string();
     let track_path = cwd.join("../build_track/pdftotext").to_str().unwrap().to_string();
-    println!("fast_path: {}", fast_path);
-    println!("track_path: {}", track_path);
-    let cmd_opt = CommandOpt::new(
+    let (seeds_dir, angora_out_dir) = initialize_directories(
+        in_dir, "angora_out", false
+    );
+    let fast_path = cwd.join("../build_fast/pdftotext").to_str().unwrap().to_string();
+    let command_option = CommandOpt::new(
         "llvm",
-        "-",
-        vec![],
+        &track_path,
+        vec![fast_path, "@@".to_string()],  // binary + input placeholder
         &angora_out_dir,
-        (fast_path, vec![]),
-        (track_path, vec![]),
         "gd",
         MEM_LIMIT,
-        MEM_LIMIT,
+        TIME_LIMIT,
         false,
-        false
+        false,
     );
-    check_dep::check_dep(in_dir.to_str().unwrap(), angora_out_dir.to_str().unwrap(), &cmd_opt);
-    let depot = Arc::new(Depot::new(in_dir, &angora_out_dir));
-    println!("{:?}", depot.dirs);
-    let stats = Arc::new(RwLock::new(ChartStats::new()));
-    let global_branches = Arc::new(GlobalBranches::new());
-    let _ = create_stats_file_and_write_pid(&angora_out_dir);
+    unsafe {
+        handle_closure_init();
+    }
+    // println!("{:?}", command_option);
+    check_dep::check_dep(in_dir, &angora_out_dir.to_str().unwrap(), &command_option);
+    let depot = Arc::new(depot::Depot::new(seeds_dir, &angora_out_dir));
+    // println!("{:?}", depot.dirs);
+    let stats = Arc::new(RwLock::new(stats::ChartStats::new()));
+    let global_branches = Arc::new(branches::GlobalBranches::new());
+    let fuzzer_stats = create_stats_file_and_write_pid(&angora_out_dir);
     let running = Arc::new(AtomicBool::new(true));
-    let mut executor = Executor::new(
-        cmd_opt.specify(0),
+    set_sigint_handler(running.clone());
+    let mut executor = executor::Executor::new(
+        command_option.specify(0),
         global_branches.clone(),
         depot.clone(),
         stats.clone(),
     );
-
-    sync_depot(&mut executor, running.clone(), &depot.dirs.seeds_dir);
-
+    depot::sync_depot(&mut executor, running.clone(), &depot.dirs.seeds_dir);
     if depot.empty() {
         error!("Failed to find any branches during dry run.");
         error!("Please ensure that the binary has been instrumented and/or input directory is populated.");
@@ -56,8 +55,22 @@ pub fn fuzz_init() {
         );
         panic!();
     }
-    fuzz_loop(running, cmd_opt, depot, global_branches, stats);
+    let r = running.clone();
+    let cmd = command_option.specify(1);
+    let d = depot.clone();
+    let b = global_branches.clone();
+    let s = stats.clone();
+    fuzz_loop(r, cmd, d, b, s);
 }
+
+fn set_sigint_handler(r: Arc<AtomicBool>) {
+    ctrlc::set_handler(move || {
+        warn!("Ending Fuzzing.");
+        r.store(false, Ordering::SeqCst);
+    })
+    .expect("Error setting SIGINT handler!");
+}
+
 
 
 fn create_stats_file_and_write_pid(angora_out_dir: &PathBuf) -> PathBuf {
@@ -73,4 +86,25 @@ fn create_stats_file_and_write_pid(angora_out_dir: &PathBuf) -> PathBuf {
     };
     write!(buffer, "fuzzer_pid : {}", pid).expect("Could not write to stats file");
     fuzzer_stats
+}
+
+fn initialize_directories(in_dir: &str, out_dir: &str, sync_afl: bool) -> (PathBuf, PathBuf) {
+    let angora_out_dir = PathBuf::from(out_dir);
+
+    let restart = in_dir == "-";
+    if !restart {
+        fs::create_dir(&angora_out_dir).expect("Output directory has existed!");
+    }
+
+    let out_dir = &angora_out_dir;
+    let seeds_dir = if restart {
+        let orig_out_dir = out_dir.with_extension(Local::now().to_rfc3339());
+        fs::rename(&out_dir, orig_out_dir.clone()).unwrap();
+        fs::create_dir(&out_dir).unwrap();
+        PathBuf::from(orig_out_dir).join(defs::INPUTS_DIR)
+    } else {
+        PathBuf::from(in_dir)
+    };
+
+    (seeds_dir, angora_out_dir)
 }

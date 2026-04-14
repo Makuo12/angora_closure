@@ -22,11 +22,26 @@ mkdir -p ${PREFIX}
 mkdir -p ${PREFIX}/lib
 cp target/release/*.a ${PREFIX}/lib
 
-cd llvm_mode
-rm -rf build
-mkdir -p build
-cd build
-cmake -DCMAKE_INSTALL_PREFIX=${PREFIX} -DCMAKE_BUILD_TYPE=Release ..
-make -j # VERBOSE=1
-make install # VERBOSE=1
+if [ "${FUZZER_TYPE}" = "angora" ]; then
+    cd llvm_mode
+    rm -rf build
+    mkdir -p build
+    cd build
+    cmake -DCMAKE_INSTALL_PREFIX=${PREFIX} -DCMAKE_BUILD_TYPE=Release ..
+    make -j # VERBOSE=1
+    make install # VERBOSE=1
+else 
+    cd fuzzer_normal
+    rm -rf build
+    mkdir -p build
+    cd build
+    cmake -DCMAKE_INSTALL_PREFIX=${PREFIX} -DCMAKE_BUILD_TYPE=Release ..
+    make -j # VERBOSE=1
+    make install # VERBOSE=1
+    # Go back to the root or use the absolute variable
+    # This ensures we find the script regardless of where we are
+    chmod +x "${ROOT_DIR}/normal_shell.sh"
+    "${ROOT_DIR}/normal_shell.sh"
+fi
+
 

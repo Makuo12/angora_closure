@@ -85,6 +85,7 @@ impl Depot {
 
     pub fn get_input_buf(&self, id: usize) -> Vec<u8> {
         let path = get_file_name(&self.dirs.inputs_dir, id);
+        println!("get_input_buf: {:?}", path);
         read_from_file(&path)
     }
 

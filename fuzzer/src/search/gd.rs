@@ -22,7 +22,7 @@ impl<'a> GdSearch<'a> {
         if self.handler.skip {
             return self.handler.executor.last_f;
         }
-        println!("input : {:?}", input);
+        debug!("input : {:?}", input);
         let f = self.handler.execute_cond(input);
         f
     }
@@ -57,21 +57,14 @@ impl<'a> GdSearch<'a> {
             self.handler.cond
         );
 
-        info!("GdSearch::run started, input_len={}, cond={:?}", input.len(), self.handler.cond);
-
         let mut f0 = if !self.handler.cond.is_first_time() {
-            println!("Reloading input from previous run");
             self.reload_input(&mut input)
         } else {
-            println!("First time — initializing start point");
             self.handler.cond.linear = true;
             self.init_start_point(&mut input)
         };
 
-        info!("Initial f0={}", f0);
-
         if f0 == std::u64::MAX {
-            warn!("f0 is MAX — falling back to random fuzz");
             self.random_fuzz(rng);
             return;
         }
@@ -81,24 +74,21 @@ impl<'a> GdSearch<'a> {
         loop {
             trace!(">>> epoch={}, f0={}", ep_i, f0);
             if self.handler.is_stopped_or_skip() {
-                println!("Stopped or skipped at epoch={}", ep_i);
                 break;
             }
 
             self.cal_gradient(&input, f0, &mut grad);
-            println!("epoch={} gradient={:?}", ep_i, grad);
 
             let mut g_i = 0;
             while grad.max_val() == 0 {
                 if self.handler.is_stopped_or_skip() || g_i > config::MAX_NUM_MINIMAL_OPTIMA_ROUND {
-                    warn!("Stuck in minimal optima, giving up at g_i={}", g_i);
                     break;
                 }
-                println!("Stuck in minor optima! g_i={} f0={}", g_i, f0);
+                debug!("Stuck in minor optima! g_i={} f0={}", g_i, f0);
                 self.handler.cond.num_minimal_optima += 1;
                 g_i += 1;
                 f0 = self.repick_start_point(&mut input, f0, rng);
-                info!("Repicked start point, new f0={}, input={:?}", f0, input);
+                debug!("repick {:?}", input);
                 if self.handler.is_stopped_or_skip() {
                     break;
                 }
@@ -107,24 +97,18 @@ impl<'a> GdSearch<'a> {
             }
 
             if self.handler.is_stopped_or_skip() || g_i > config::MAX_NUM_MINIMAL_OPTIMA_ROUND {
-                println!("Breaking loop: stopped={} g_i={}", self.handler.is_stopped_or_skip(), g_i);
                 break;
             }
 
             grad.normalize();
-            println!("Normalized gradient={:?}", grad);
 
-            let f_prev = f0;
+            trace!("input={:?}, gradient={:?}", input, grad);
             f0 = self.descend(&mut input, f0, &grad, rng);
-            info!("epoch={} descend: f0 {} -> {}", ep_i, f_prev, f0);
             ep_i += 1;
         }
 
-        println!("GdSearch::run finished after {} epochs, last_f={}", ep_i, self.handler.executor.last_f);
-
         if self.handler.executor.last_f < std::u64::MAX {
             self.handler.cond.variables = input.get_value();
-            println!("Saved best input variables={:?}", self.handler.cond.variables);
         }
     }
 
@@ -134,7 +118,7 @@ impl<'a> GdSearch<'a> {
     }
 
     fn init_start_point(&mut self, input_min: &mut MutInput) -> u64 {
-        println!("Init start...");
+        debug!("Init start...");
         let mut input = input_min.clone();
         let mut fmin = self.handler.execute_cond_direct();
 
@@ -251,7 +235,7 @@ impl<'a> GdSearch<'a> {
     }
 
     fn cal_gradient(&mut self, input: &MutInput, f0: u64, grad: &mut Grad) {
-        println!("start calculate gradient.. input {:?}, f0 {:?}", input, f0);
+        debug!("start calculate gradient.. input {:?}, f0 {:?}", input, f0);
         // let mut grad = Grad::new(input.len());
         // grad.mul(config::GD_MOMENTUM_BETA);
         let mut max = 0_u64;
@@ -289,12 +273,12 @@ impl<'a> GdSearch<'a> {
         let mut input = input_min.clone();
         let mut delta_index: Option<usize> = None;
 
-        println!("descend..");
+        debug!("descend..");
 
         let vsum = grad.val_sum();
         if vsum > 0 {
             let guess_step = f0 / vsum;
-            println!(
+            debug!(
                 "f0 is : {}, vsum: {}, input: {:?}, guess step is : {}",
                 f0, vsum, input, guess_step
             );
@@ -359,7 +343,7 @@ impl<'a> GdSearch<'a> {
                     break;
                 }
                 assert!(grad[new_idx].pct > 0.0);
-                println!(
+                debug!(
                     "switch to one dem: idx:{}, pct:{}",
                     new_idx, grad[new_idx].pct
                 );

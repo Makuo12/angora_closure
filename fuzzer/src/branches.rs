@@ -85,7 +85,11 @@ impl Branches {
     pub fn get_id(&self) -> i32 {
         self.trace.get_id()
     }
-
+    pub fn get_trace_ptr(&mut self) -> *mut u8 {
+        let ptr = self.trace.as_mut_ptr();
+        println!("[get_trace_ptr] ptr={:p}", ptr);
+        ptr
+    }
     fn get_path(&self) -> Vec<(usize, u8)> {
         let mut path = Vec::<(usize, u8)>::new();
         let buf_plus: &BranchBufPlus = cast!(&*self.trace);
@@ -121,17 +125,19 @@ impl Branches {
     }
 
     pub fn has_new(&mut self, status: StatusType) -> (bool, bool, usize) {
+        println!("[has_new] start, status={:?}", status);
         let gb_map = match status {
             StatusType::Normal => &self.global.virgin_branches,
             StatusType::Timeout => &self.global.tmouts_branches,
             StatusType::Crash => &self.global.crashes_branches,
             _ => {
+                println!("[has_new] unsupported status, returning early");
                 return (false, false, 0);
             },
         };
         let path = self.get_path();
         let edge_num = path.len();
-
+        println!("[has_new] path edge_num={}", edge_num);
         let mut to_write = vec![];
         let mut has_new_edge = false;
         let mut num_new_edge = 0;
@@ -140,31 +146,32 @@ impl Branches {
             let gb_map_read = gb_map.read().unwrap();
             for &br in &path {
                 let gb_v = gb_map_read[br.0];
-
                 if gb_v == 255u8 {
                     num_new_edge += 1;
                 }
-
                 if (br.1 & gb_v) > 0 {
                     to_write.push((br.0, gb_v & (!br.1)));
                 }
             }
         }
-
+        println!(
+            "[has_new] read done, num_new_edge={}, to_write_len={}",
+            num_new_edge,
+            to_write.len()
+        );
         if num_new_edge > 0 {
             if status == StatusType::Normal {
-                // only count virgin branches
                 self.global
                     .density
                     .fetch_add(num_new_edge, Ordering::Relaxed);
+                println!("[has_new] updated density by +{}", num_new_edge);
             }
             has_new_edge = true;
         }
-
         if to_write.is_empty() {
+            println!("[has_new] nothing to write, returning (false, false, {})", edge_num);
             return (false, false, edge_num);
         }
-
         {
             // write
             let mut gb_map_write = gb_map.write().unwrap();
@@ -172,7 +179,12 @@ impl Branches {
                 gb_map_write[br.0] = br.1;
             }
         }
-
+        println!(
+            "[has_new] done, wrote {} entries, has_new_edge={}, edge_num={}",
+            to_write.len(),
+            has_new_edge,
+            edge_num
+        );
         (true, has_new_edge, edge_num)
     }
 }

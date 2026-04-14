@@ -1,4 +1,3 @@
 /target
 Cargo.lock
-/xpdf-4.06_2
-/pdf
+/.vscode

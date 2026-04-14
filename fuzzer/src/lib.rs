@@ -34,5 +34,8 @@ unsafe extern "C" {
     unsafe fn handle_closure_reset();
     unsafe fn set_crash_handler();
     unsafe fn handle_fuzz(argc: c_int, argv: *mut *mut c_char) -> c_int;
+    unsafe fn set_angora_area_ptr(ptr: *mut u8);
+    unsafe fn close_open_file_handles();
+    unsafe fn free_ptrs();
 }
 

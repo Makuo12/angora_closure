@@ -1,6 +1,9 @@
 FROM --platform=linux/amd64 ubuntu:16.04
 ENV DEBIAN_FRONTEND=noninteractive
 
+# FUZZER_TYPE can be normal or angora
+
+
 RUN apt-get update && \
     apt-get -y upgrade && \
     apt-get install -y git build-essential wget zlib1g-dev python-pip python-dev && \
@@ -26,13 +29,27 @@ ENV RUSTUP_HOME=/usr/local/rustup \
     LD_LIBRARY_PATH=/clang+llvm/lib:$LD_LIBRARY_PATH
 # ↑ add cmake bin to PATH
 
-RUN mkdir -p angora
-WORKDIR angora
-COPY ./build ./build
+RUN mkdir -p angora_closure
+WORKDIR angora_closure
+# Copy only the specific scripts needed — cache only busts if THAT script changes
+COPY ./build/install_rust.sh  ./build/install_rust.sh
 RUN ./build/install_rust.sh
+
+COPY ./build/install_llvm.sh  ./build/install_llvm.sh
 RUN PREFIX=/ ./build/install_llvm.sh
+
+COPY ./build/install_tools.sh ./build/install_tools.sh
 RUN ./build/install_tools.sh
+
+# Now copy the rest of build/ and source
+COPY ./build ./build
+
 COPY . .
+
+ARG FUZZER_TYPE=normal
+ENV FUZZER_TYPE=${FUZZER_TYPE}
+
 RUN ./build/build.sh
+
 VOLUME ["/data"]
 CMD ["/bin/bash"]

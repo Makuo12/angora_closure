@@ -25,5 +25,23 @@ pub use self::handler::SearchHandler;
 pub mod gd;
 pub use self::gd::GdSearch;
 
+pub mod random;
+pub use self::random::RandomSearch;
+pub mod cbh;
+pub use self::cbh::CbhSearch;
+pub mod mb;
+pub use self::mb::MbSearch;
+
+//Other cases of special offsets
+pub mod cmpfn;
+pub use self::cmpfn::FnFuzz;
 pub mod len;
 pub use self::len::LenFuzz;
+pub mod afl;
+pub use self::afl::AFLFuzz;
+pub mod exploit;
+pub use self::exploit::ExploitFuzz;
+pub mod det;
+pub use self::det::DetFuzz;
+pub mod one_byte;
+pub use self::one_byte::OneByteFuzz;

@@ -9,6 +9,8 @@ extern const struct mach_header_64 _mh_execute_header;
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdatomic.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #include <setjmp.h>
@@ -23,16 +25,16 @@ static void *copy_memory = NULL;
 static unsigned long addr = 0;
 static unsigned long size = 0;
 static unsigned int reset_globals = 0;
+void set_crash_handler();
 
-#define NO_COV __attribute__((no_sanitize("coverage")))
 
 sigjmp_buf env;
-jmp_buf __longjmp_buf__;
 
 void handle_closure_init(void)
 {
+    set_crash_handler();
 #ifdef __APPLE__
-    unsigned long section_size;
+        unsigned long section_size;
     uint8_t *section_addr = getsectiondata(&_mh_execute_header, "__DATA", "__cls_glob", &section_size);
     if (section_addr == NULL)
     {
@@ -40,7 +42,7 @@ void handle_closure_init(void)
         return;
     }
 #elif __linux__
-    extern char __start___cls_glob[] __attribute__((weak));
+        extern char __start___cls_glob[] __attribute__((weak));
     extern char __stop___cls_glob[] __attribute__((weak));
 
     if (__start___cls_glob == NULL || __start___cls_glob == __stop___cls_glob)
@@ -70,23 +72,23 @@ void handle_closure_init(void)
 
 void restore_global_sections(char *target, char *source, int len)
 {
-    long pagesize = sysconf(_SC_PAGESIZE);
-    void *page_start = (void *)((uintptr_t)target & ~(pagesize - 1));
-    size_t protect_len = ((uintptr_t)target + len) - (uintptr_t)page_start;
+    // long pagesize = sysconf(_SC_PAGESIZE);
+    // void *page_start = (void *)((uintptr_t)target & ~(pagesize - 1));
+    // size_t protect_len = ((uintptr_t)target + len) - (uintptr_t)page_start;
 
-    if (mprotect(page_start, protect_len, PROT_READ | PROT_WRITE) == -1)
-    {
-        perror("mprotect (RW)");
-        return;
-    }
+    // if (mprotect(page_start, protect_len, PROT_READ | PROT_WRITE) == -1)
+    // {
+    //     perror("mprotect (RW)");
+    //     return;
+    // }
 
     memcpy(target, source, len);
 
-    // reset back to read-only
-    if (mprotect(page_start, protect_len, PROT_READ) == -1)
-    {
-        perror("mprotect (RO)");
-    }
+    // // reset back to read-only
+    // if (mprotect(page_start, protect_len, PROT_READ) == -1)
+    // {
+    //     perror("mprotect (RO)");
+    // }
 }
 
 void handle_closure_reset(void)
@@ -120,35 +122,73 @@ void crash_handler(int sig)
     siglongjmp(env, sig);
 }
 
-NO_COV
-void set_crash_handler()
+// NO_COV
+void set_crash_handler(void)
 {
-    signal(SIGSEGV, crash_handler);
-    signal(SIGABRT, crash_handler);
-    signal(SIGFPE, crash_handler);
-    signal(SIGBUS, crash_handler);
-    signal(SIGTRAP, crash_handler);
-    signal(SIGILL, crash_handler);
+    struct sigaction sa;
+    sa.sa_handler = crash_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_NODEFER; /* persist across longjmp, don't reset after firing */
+
+    sigaction(SIGSEGV, &sa, NULL);
+    sigaction(SIGFPE, &sa, NULL);
+    sigaction(SIGBUS, &sa, NULL);
+    sigaction(SIGTRAP, &sa, NULL);
+    sigaction(SIGILL, &sa, NULL);
+
+    /* FIX 6: SIGABRT is NOT caught here.
+    // sigaction(SIGABRT, &sa, NULL);
 }
+
 
 int handle_fuzz(int argc, char *argv[])
 {
     int result = 0;
+    int saved_stderr = -1;
+    int saved_stdout = -1;
+    mkdir("/tmp/my_angora_log", 0777);
+    int fd = open("/tmp/my_angora_log/target_stderr.log", O_CREAT | O_WRONLY, 0666);
+    if (fd >= 0)
+    {
+        saved_stderr = dup(STDERR_FILENO);
+        dup2(fd, STDERR_FILENO);
+        close(fd);
+    }
+    int fd_out = open("/tmp/my_angora_log/target_stdout.log", O_CREAT | O_WRONLY, 0666);
+    if (fd_out >= 0)
+    {
+        saved_stdout = dup(STDOUT_FILENO);
+        dup2(fd_out, STDOUT_FILENO);
+        close(fd_out);
+    }
     int sig = sigsetjmp(env, 1);
     if (sig != 0)
     {
-        // sig contains the signal number that caused the jump
-        printf("\n!!!Saved by long jump!!! signal: %d\n", sig);
-        result = sig; // store the signal number as the error code
+        printf("sig %d", sig);
+        result = sig;
     }
     else
     {
         result = target_main(argc, argv);
+        printf("result %d", result);
     }
+
+    // Restore ALWAYS — whether normal return or longjmp
+    if (saved_stderr >= 0) // ← use saved_stderr not fd
+    {
+        dup2(saved_stderr, STDERR_FILENO);
+        close(saved_stderr);
+        saved_stderr = -1;
+    }
+    if (saved_stdout >= 0) {
+        dup2(saved_stdout, STDOUT_FILENO);
+        close(saved_stdout);
+        saved_stdout = -1;
+    }
+
     return result;
 }
-
 void exitHook(int status)
 {
-    longjmp(__longjmp_buf__, status);
+    siglongjmp(env, status != 0 ? status : -1);
 }
