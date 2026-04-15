@@ -31,8 +31,6 @@ pub fn fuzz_loop(
 
     while running.load(Ordering::Relaxed) {
         iteration += 1;
-        println!("[fuzz_loop] iteration={}", iteration);
-
         let entry = match depot.get_entry() {
             Some(e) => e,
             None => {
@@ -47,26 +45,20 @@ pub fn fuzz_loop(
             cond.base.cmpid, cond.base.belong, cond.state, priority);
 
         if priority.is_done() {
-            println!("[fuzz_loop] priority is done, breaking");
             break;
         }
 
         if cond.is_done() {
-            println!("[fuzz_loop] cond is done, skipping: cmpid={}", cond.base.cmpid);
             depot.update_entry(cond);
             continue;
         }
 
         let belong_input = cond.base.belong as usize;
         let buf = depot.get_input_buf(belong_input);
-        println!("[fuzz_loop] belong_input={}, buf_len={}", belong_input, buf.len());
-
         {
             let fuzz_type = cond.get_fuzz_type();
-            println!("[fuzz_loop] fuzz_type={:?}", fuzz_type);
 
             let handler = SearchHandler::new(running.clone(), &mut executor, &mut cond, buf);
-            println!("[fuzz_loop] handler created, offsets={:?}", handler.cond.offsets);
 
             match fuzz_type {
                 FuzzType::ExploreFuzz => {
@@ -85,7 +77,6 @@ pub fn fuzz_loop(
                         println!("[fuzz_loop] running DetFuzz");
                         DetFuzz::new(handler).run();
                     } else {
-                        println!("[fuzz_loop] running search method={:?}", search_method);
                         match search_method {
                             SearchMethod::Gd => {
                                 GdSearch::new(handler).run(&mut thread_rng());

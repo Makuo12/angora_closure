@@ -11,11 +11,11 @@ pub fn fuzz_init() {
     pretty_env_logger::init();
     let in_dir = "../pdf";
     let cwd = env::current_dir().unwrap();
-    let track_path = cwd.join("../build_track/pdftotext").to_str().unwrap().to_string();
+    let track_path = cwd.join("../build_track/pdftotext.taint").to_str().unwrap().to_string();
     let (seeds_dir, angora_out_dir) = initialize_directories(
         in_dir, "angora_out", false
     );
-    let fast_path = cwd.join("../build_fast/pdftotext").to_str().unwrap().to_string();
+    let fast_path = cwd.join("../build_fast/pdftotext.fast").to_str().unwrap().to_string();
     let command_option = CommandOpt::new(
         "llvm",
         &track_path,

@@ -24,7 +24,7 @@ set(ANGORA_RULE_DIR "rules")
 set(ANGORA_PASS_DIR "pass")
 
 # Subdirectories
-# add_subdirectory(compiler)
+add_subdirectory(compiler)
 add_subdirectory(pass)
 add_subdirectory(closure)
 add_subdirectory(rules)

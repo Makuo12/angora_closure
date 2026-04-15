@@ -239,8 +239,8 @@ static void edit_params(u32 argc, char **argv) {
     if (!strcmp(cur, "-x"))
       x_set = 1;
 
-    if (!strcmp(cur, "-c") || !strcmp(cur, "-S") || !strcmp(cur, "-E"))
-      maybe_linking = 0;
+     if (!strcmp(cur, "-c") || !strcmp(cur, "-S") || !strcmp(cur, "-E"))
+       maybe_linking = 0;
 
     if (!strcmp(cur, "-fsanitize=address") || !strcmp(cur, "-fsanitize=memory"))
       asan_set = 1;

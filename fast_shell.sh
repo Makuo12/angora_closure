@@ -30,18 +30,19 @@ PASS_FLAGS="\
         -g -O3 -funroll-loops"
 
 LINK_FLAGS="\
-    -Wl,--allow-multiple-definition \
-    -Wl,--whole-archive \
+	-Wl,--allow-multiple-definition  \
+        -stdlib=libc++ \
+        -L${ANGORA_PATH}/lib/libcxx_fast/ \
+        -lc++fast -Wl,--start-group -lc++abifast -lc++abi -Wl,--end-group \
+        -Wl,--whole-archive \
         ${ANGORA_PATH}/lib/libruntime_fast.a \
         ${ANGORA_PATH}/lib/libclosure.a \
-        ${ANGORA_PATH}/lib/libcxx_fast/libc++fast.a \
-        ${ANGORA_PATH}/lib/libcxx_fast/libc++abifast.a \
-    -Wl,--no-whole-archive \
-    ${FUZZ_MAIN_A} \
-    ${ANGORA_PATH}/lib/libangora.a \
-    -Wl,--no-as-needed \
-    -Wl,--gc-sections \
-    -ldl -lpthread -lm"
+        -Wl,--no-whole-archive \
+        ${FUZZ_MAIN_A} \
+        ${ANGORA_PATH}/lib/libangora.a \
+        -Wl,--no-as-needed \
+        -Wl,--gc-sections \
+        -ldl -lpthread -lm"
 
 cmake -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_C_COMPILER=/clang+llvm/bin/clang \
@@ -56,7 +57,5 @@ cmake -DCMAKE_BUILD_TYPE=Release \
 make pdftotext -j$(nproc)
 cd ../..
 
-
 mkdir -p build_fast
-
-cp ./xpdf-4.06_2/build_fast/xpdf/pdftotext build_fast/
+cp ./xpdf-4.06_2/build_fast/xpdf/pdftotext build_fast/pdftotext.fast

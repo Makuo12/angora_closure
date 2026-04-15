@@ -3,7 +3,6 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # FUZZER_TYPE can be normal or angora
 
-
 RUN apt-get update && \
     apt-get -y upgrade && \
     apt-get install -y git build-essential wget zlib1g-dev python-pip python-dev && \
