@@ -83,7 +83,7 @@ lazy_static! {
     pub static ref SHM_CONDS: Mutex<Option<ShmConds>> = Mutex::new(ShmConds::get_from_env_id());
 }
 
-#[inline(always)]
+// #[inline(always)]
 pub fn reset_shm_conds() {
     let mut conds = SHM_CONDS.lock().expect("SHM mutex poisoned.");
     match conds.deref_mut() {
@@ -96,4 +96,10 @@ pub fn reset_shm_conds() {
     unsafe {
         context::reset_context();
     }
+}
+
+#[unsafe(no_mangle)]
+
+pub extern "C" fn angora_reset_shm() {
+    reset_shm_conds();
 }

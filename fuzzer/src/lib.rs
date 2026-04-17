@@ -37,5 +37,7 @@ unsafe extern "C" {
     unsafe fn set_angora_area_ptr(ptr: *mut u8);
     unsafe fn close_open_file_handles();
     unsafe fn free_ptrs();
+    unsafe fn angora_map_shm();
+    unsafe fn angora_reset_shm();
 }
 

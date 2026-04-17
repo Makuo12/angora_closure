@@ -39,6 +39,7 @@ pub struct CommandOpt {
     pub id: usize,
     pub main: (String, Vec<String>),
     pub track: (String, Vec<String>),
+    pub main_fuzz: (String, Vec<String>),
     pub tmp_dir: PathBuf,
     pub out_file: String,
     pub forksrv_socket_path: String,
@@ -58,6 +59,7 @@ impl CommandOpt {
     pub fn new(
         mode: &str,
         track_target: &str,
+        main_target: &str,
         pargs: Vec<String>,
         out_dir: &Path,
         search_method: &str,
@@ -72,6 +74,7 @@ impl CommandOpt {
         tmpfs::create_tmpfs_dir(&tmp_dir);
 
         let out_file = tmp_dir.join(INPUT_FILE).to_str().unwrap().to_owned();
+        print!("file {}", out_file);
         let forksrv_socket_path = tmp_dir
             .join(FORKSRV_SOCKET_FILE)
             .to_str()
@@ -80,6 +83,7 @@ impl CommandOpt {
 
         let track_path = tmp_dir.join(TRACK_FILE).to_str().unwrap().to_owned();
 
+        print!("file {}", track_path);
         let has_input_arg = pargs.contains(&"@@".to_string());
 
         let clang_lib = Command::new("llvm-config")
@@ -89,7 +93,7 @@ impl CommandOpt {
             .stdout;
         let clang_lib = String::from_utf8(clang_lib).unwrap();
         let ld_library = "$LD_LIBRARY_PATH:".to_string() + clang_lib.trim();
-
+        
         assert_ne!(
             track_target, "-",
             "You should set track target with -t PROM in LLVM mode!"
@@ -98,7 +102,7 @@ impl CommandOpt {
         let mut tmp_args = pargs.clone();
         let main_bin = tmp_args[0].clone();
         let main_args: Vec<String> = tmp_args.drain(1..).collect();
-        let uses_asan = check_dep::check_asan(&main_bin);
+        let uses_asan = false;
         if uses_asan && mem_limit != 0 {
             warn!("The program compiled with ASAN, set MEM_LIMIT to 0 (unlimited)");
             mem_limit = 0;
@@ -130,7 +134,8 @@ impl CommandOpt {
             track_bin = track_target.to_string();
             track_args = main_args.clone();
         }
-
+        let main_fuzz_bin = main_target.to_string();
+        let main_fuzz_args = main_args.clone();
         for bin in [&main_bin, &track_bin].iter() {
             match fs::metadata(bin) {
                 Ok(meta) => {
@@ -146,6 +151,7 @@ impl CommandOpt {
             id: 0,
             main: (main_bin, main_args),
             track: (track_bin, track_args),
+            main_fuzz: (main_fuzz_bin, main_fuzz_args),
             tmp_dir,
             out_file: out_file,
             forksrv_socket_path,
@@ -191,7 +197,7 @@ impl CommandOpt {
 impl Drop for CommandOpt {
     fn drop(&mut self) {
         if self.is_raw {
-            tmpfs::clear_tmpfs_dir(&self.tmp_dir);
+            // tmpfs::clear_tmpfs_dir(&self.tmp_dir);
         }
     }
 }

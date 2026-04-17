@@ -2,7 +2,7 @@ extern crate cc;
 
 fn main() {
     cc::Build::new()
-        .compiler("/clang+llvm/bin/clang") 
+        // .compiler("/clang+llvm/bin/clang") 
         .file("src/context.c")
         .file("../global_mem.c")
         .flag("-Wno-attributes")

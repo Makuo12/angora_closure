@@ -1,7 +1,7 @@
-use std::sync::{
+use std::{sync::{
     Arc, RwLock,
     atomic::{AtomicBool, Ordering},
-};
+}, time::Instant};
 
 use rand::thread_rng;
 
@@ -15,9 +15,11 @@ pub fn fuzz_loop(
     running: Arc<AtomicBool>,
     cmd_opt: CommandOpt,
     depot: Arc<Depot>,
+    executor: Executor,
     global_branches: Arc<GlobalBranches>,
     global_stats: Arc<RwLock<ChartStats>>,
 ) {
+    let start = Instant::now();
     let search_method = cmd_opt.search_method;
     let mut executor = Executor::new(
         cmd_opt,
@@ -26,24 +28,24 @@ pub fn fuzz_loop(
         global_stats.clone(),
     );
     
-    println!("[fuzz_loop] starting loop");
     let mut iteration = 0usize;
-
+    let mut last_triggered = 0u64;
     while running.load(Ordering::Relaxed) {
         iteration += 1;
+        let elapsed_mins = start.elapsed().as_secs() / 60;
+        if elapsed_mins > 0 && elapsed_mins % 5 == 0 && elapsed_mins != last_triggered {
+            last_triggered = elapsed_mins;
+            println!("Iteration {}: {} minutes elapsed", iteration, elapsed_mins);
+        }
         let entry = match depot.get_entry() {
             Some(e) => e,
             None => {
-                println!("[fuzz_loop] depot.get_entry() returned None, breaking");
                 break;
             }
         };
 
         let mut cond = entry.0;
         let priority = entry.1;
-        println!("[fuzz_loop] got entry: cmpid={}, belong={}, state={:?}, priority={:?}",
-            cond.base.cmpid, cond.base.belong, cond.state, priority);
-
         if priority.is_done() {
             break;
         }
@@ -62,19 +64,13 @@ pub fn fuzz_loop(
 
             match fuzz_type {
                 FuzzType::ExploreFuzz => {
-                    println!("[fuzz_loop] ExploreFuzz: time_expired={}, state={:?}",
-                        handler.cond.is_time_expired(), handler.cond.state);
-
                     if handler.cond.is_time_expired() {
-                        println!("[fuzz_loop] time expired, advancing state");
                         handler.cond.next_state();
                     }
 
                     if handler.cond.state.is_one_byte() {
-                        println!("[fuzz_loop] running OneByteFuzz");
                         OneByteFuzz::new(handler).run();
                     } else if handler.cond.state.is_det() {
-                        println!("[fuzz_loop] running DetFuzz");
                         DetFuzz::new(handler).run();
                     } else {
                         match search_method {
@@ -94,39 +90,29 @@ pub fn fuzz_loop(
                     }
                 },
                 FuzzType::ExploitFuzz => {
-                    println!("[fuzz_loop] ExploitFuzz: state={:?}", handler.cond.state);
                     if handler.cond.state.is_one_byte() {
-                        println!("[fuzz_loop] ExploitFuzz running OneByteFuzz");
                         let mut fz = OneByteFuzz::new(handler);
                         fz.run();
                         fz.handler.cond.to_unsolvable();
                     } else {
-                        println!("[fuzz_loop] ExploitFuzz running ExploitFuzz");
                         ExploitFuzz::new(handler).run();
                     }
                 },
                 FuzzType::AFLFuzz => {
-                    println!("[fuzz_loop] running AFLFuzz");
                     AFLFuzz::new(handler).run();
                 },
                 FuzzType::LenFuzz => {
-                    println!("[fuzz_loop] running LenFuzz");
                     LenFuzz::new(handler).run();
                 },
                 FuzzType::CmpFnFuzz => {
-                    println!("[fuzz_loop] running FnFuzz");
                     FnFuzz::new(handler).run();
                 },
                 FuzzType::OtherFuzz => {
-                    println!("[fuzz_loop] OtherFuzz — unknown fuzz type, skipping");
                     warn!("Unknown fuzz type!!");
                 },
             }
         }
 
-        println!("[fuzz_loop] updating entry: cmpid={}, state={:?}", cond.base.cmpid, cond.state);
         depot.update_entry(cond);
     }
-
-    println!("[fuzz_loop] loop exited after {} iterations", iteration);
 }

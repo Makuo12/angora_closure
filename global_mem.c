@@ -129,7 +129,6 @@ void set_crash_handler(void)
     sa.sa_handler = crash_handler;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = SA_NODEFER; /* persist across longjmp, don't reset after firing */
-
     sigaction(SIGSEGV, &sa, NULL);
     sigaction(SIGFPE, &sa, NULL);
     sigaction(SIGBUS, &sa, NULL);
@@ -169,7 +168,6 @@ int handle_fuzz(int argc, char *argv[])
     else
     {
         result = target_main(argc, argv);
-        printf("result %d", result);
     }
 
     // Restore ALWAYS — whether normal return or longjmp

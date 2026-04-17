@@ -1,39 +1,42 @@
-use std::{env, fs, io::Write, path::{self, PathBuf}, sync::{Arc, RwLock, atomic::{AtomicBool, Ordering}}};
+use std::{collections::HashMap, env, fs, io::Write, path::{self, Path, PathBuf}, sync::{Arc, RwLock, atomic::{AtomicBool, AtomicUsize, Ordering}}, thread, time};
 
 use angora_common::{config::{MEM_LIMIT, TIME_LIMIT}, defs};
 use chrono::Local;
 use log::{error, info};
 use runtime::track;
 
-use crate::{branches::{self, GlobalBranches}, check_dep, command::CommandOpt, depot::{self, Depot, sync_depot}, executor::{self, Executor}, fuzz_loop::fuzz_loop, handle_closure_init, set_crash_handler, stats::{self, ChartStats}};
+use crate::{bind_cpu, branches::{self, GlobalBranches}, check_dep, command::{self, CommandOpt}, depot::{self, Depot, sync_depot}, executor::{self, Executor}, fuzz_loop::{self, fuzz_loop}, handle_closure_init, set_crash_handler, stats::{self, ChartStats, show_stats}};
 
 pub fn fuzz_init() {
     pretty_env_logger::init();
-    let in_dir = "../pdf";
+    let out_dir = "angora_out";
     let cwd = env::current_dir().unwrap();
+    let in_dir = cwd.join("../pdf").to_str().unwrap().to_string();
     let track_path = cwd.join("../build_track/pdftotext.taint").to_str().unwrap().to_string();
     let (seeds_dir, angora_out_dir) = initialize_directories(
-        in_dir, "angora_out", false
+        &in_dir, out_dir, false
     );
     let fast_path = cwd.join("../build_fast/pdftotext.fast").to_str().unwrap().to_string();
+    let fast_main_path = cwd.join("../build_main/pdftotext.fast").to_str().unwrap().to_string();
     let command_option = CommandOpt::new(
         "llvm",
         &track_path,
+        &fast_main_path,
         vec![fast_path, "@@".to_string()],  // binary + input placeholder
         &angora_out_dir,
         "gd",
-        MEM_LIMIT,
+        0,
         TIME_LIMIT,
         false,
-        false,
+        true,
     );
+    info!("{:?}", command_option);
     unsafe {
         handle_closure_init();
     }
-    // println!("{:?}", command_option);
-    check_dep::check_dep(in_dir, &angora_out_dir.to_str().unwrap(), &command_option);
+    check_dep::check_dep(&in_dir, &angora_out_dir.to_str().unwrap(), &command_option);
     let depot = Arc::new(depot::Depot::new(seeds_dir, &angora_out_dir));
-    // println!("{:?}", depot.dirs);
+    info!("{:?}", depot.dirs);
     let stats = Arc::new(RwLock::new(stats::ChartStats::new()));
     let global_branches = Arc::new(branches::GlobalBranches::new());
     let fuzzer_stats = create_stats_file_and_write_pid(&angora_out_dir);
@@ -55,12 +58,42 @@ pub fn fuzz_init() {
         );
         panic!();
     }
-    let r = running.clone();
-    let cmd = command_option.specify(1);
-    let d = depot.clone();
-    let b = global_branches.clone();
-    let s = stats.clone();
-    fuzz_loop(r, cmd, d, b, s);
+    let (handles, child_count) = init_cpus_and_run_fuzzing_threads(
+        Option::None,
+        1,
+        &running,
+        &command_option,
+        &global_branches,
+        &depot,
+        &stats,
+    );
+    let log_file = match fs::File::create(angora_out_dir.join(defs::ANGORA_LOG_FILE)) {
+        Ok(a) => a,
+        Err(e) => {
+            error!("FATAL: Could not create log file: {:?}", e);
+            panic!();
+        },
+    };
+    main_thread_sync_and_log(
+        log_file,
+        out_dir,
+        false,
+        running.clone(),
+        &mut executor,
+        &depot,
+        &global_branches,
+        &stats,
+        child_count,
+    );
+    for handle in handles {
+        if handle.join().is_err() {
+            error!("Error happened in fuzzing thread!");
+        }
+    }
+    match fs::remove_file(&fuzzer_stats) {
+        Ok(_) => (),
+        Err(e) => warn!("Could not remove fuzzer stats file: {:?}", e),
+    };
 }
 
 fn set_sigint_handler(r: Arc<AtomicBool>) {
@@ -107,4 +140,87 @@ fn initialize_directories(in_dir: &str, out_dir: &str, sync_afl: bool) -> (PathB
     };
 
     (seeds_dir, angora_out_dir)
+}
+
+fn init_cpus_and_run_fuzzing_threads(
+    bind: Option<usize>,
+    num_jobs: usize,
+    running: &Arc<AtomicBool>,
+    command_option: &command::CommandOpt,
+    global_branches: &Arc<branches::GlobalBranches>,
+    depot: &Arc<depot::Depot>,
+    stats: &Arc<RwLock<stats::ChartStats>>,
+) -> (Vec<thread::JoinHandle<()>>, Arc<AtomicUsize>) {
+    let child_count = Arc::new(AtomicUsize::new(0));
+    let mut handlers = vec![];
+    let free_cpus = match bind {
+        None => bind_cpu::find_free_cpus(num_jobs),
+        Some(start_cid) => {
+            let max_num = num_cpus::get();
+            (start_cid..max_num).collect()
+        },
+    };
+    let free_cpus_len = free_cpus.len();
+    let bind_cpus = if free_cpus_len < num_jobs {
+        warn!("The number of free cpus is less than the number of jobs. Will not bind any thread to any cpu.");
+        false
+    } else {
+        true
+    };
+    for thread_id in 0..num_jobs {
+        let c = child_count.clone();
+        let r = running.clone();
+        let cmd = command_option.specify(thread_id + 1);
+        let d = depot.clone();
+        let b = global_branches.clone();
+        let s = stats.clone();
+        let cid = if bind_cpus { free_cpus[thread_id] } else { 0 };
+        let handler = thread::spawn(move || {
+            c.fetch_add(1, Ordering::SeqCst);
+            if bind_cpus {
+                bind_cpu::bind_thread_to_cpu_core(cid);
+            }
+            fuzz_loop::fuzz_loop(r, cmd, d, b, s);
+        });
+        handlers.push(handler);
+    }
+    (handlers, child_count)
+}
+
+
+fn main_thread_sync_and_log(
+    mut log_file: fs::File,
+    out_dir: &str,
+    sync_afl: bool,
+    running: Arc<AtomicBool>,
+    executor: &mut executor::Executor,
+    depot: &Arc<depot::Depot>,
+    global_branches: &Arc<branches::GlobalBranches>,
+    stats: &Arc<RwLock<stats::ChartStats>>,
+    child_count: Arc<AtomicUsize>,
+) {
+    let mut last_explore_num = stats.read().unwrap().get_explore_num();
+    let sync_dir = Path::new(out_dir);
+    let mut synced_ids: HashMap<String, usize> = HashMap::new();
+    let mut sync_counter = 1;
+    show_stats(&mut log_file, depot, global_branches, stats);
+    while running.load(Ordering::SeqCst) {
+        thread::sleep(time::Duration::from_secs(5));
+        sync_counter -= 1;
+        show_stats(&mut log_file, depot, global_branches, stats);
+        if Arc::strong_count(&child_count) == 1 {
+            let s = stats.read().unwrap();
+            let cur_explore_num = s.get_explore_num();
+            if cur_explore_num == 0 {
+                warn!("There is none constraint in the seeds, please ensure the inputs are vaild in the seed directory, or the program is ran correctly, or the read functions have been marked as source.");
+                break;
+            } else {
+                if cur_explore_num == last_explore_num {
+                    info!("Solve all constraints!!");
+                    break;
+                }
+                last_explore_num = cur_explore_num;
+            }
+        }
+    }
 }

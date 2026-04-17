@@ -1,9 +1,9 @@
 use super::{limit::SetLimit, *};
 
 use crate::{
-    branches, close_open_file_handles, command, cond_stmt::{self, NextState}, depot, executor::pipe_fd::PipeFd, free_ptrs, handle_closure_reset, handle_fuzz, set_angora_area_ptr, stats, track
+    angora_map_shm, angora_reset_shm, branches, close_open_file_handles, command, cond_stmt::{self, NextState}, depot, executor::{forksrv::Forksrv, pipe_fd::PipeFd}, free_ptrs, handle_closure_reset, handle_fuzz, set_angora_area_ptr, stats, track
 };
-use angora_common::{config, defs};
+use angora_common::{config::{self, TIME_LIMIT}, defs};
 
 use std::{
     collections::HashMap, ffi::{CString, c_char, c_int}, path::Path, process::{Command, Stdio}, sync::{
@@ -17,6 +17,7 @@ pub struct Executor {
     pub branches: branches::Branches,
     pub t_conds: cond_stmt::ShmConds,
     envs: HashMap<String, String>,
+    forksrv: Option<Forksrv>,
     depot: Arc<depot::Depot>,
     fd: PipeFd,
     tmout_cnt: usize,
@@ -28,55 +29,78 @@ pub struct Executor {
 }
 
 impl Executor {
+
     pub fn new(
         cmd: command::CommandOpt,
         global_branches: Arc<branches::GlobalBranches>,
         depot: Arc<depot::Depot>,
         global_stats: Arc<RwLock<stats::ChartStats>>,
     ) -> Self {
-        // ** Share Memory **
-        let mut branches = branches::Branches::new(global_branches);
-        let t_conds = cond_stmt::ShmConds::new();
+        info!("Initializing fuzzer instance");
 
+        // ** Share Memory **
+        let branches = branches::Branches::new(global_branches);
+        let t_conds = cond_stmt::ShmConds::new();
+        info!(
+            "Shared memory initialized: branches_id={}, conds_id={}",
+            branches.get_id(),
+            t_conds.get_id()
+        );
         // ** Envs **
+        let branches_shm_id = branches.get_id().to_string();
+
         let mut envs = HashMap::new();
-        envs.insert(
-            defs::ASAN_OPTIONS_VAR.to_string(),
-            defs::ASAN_OPTIONS_CONTENT.to_string(),
-        );
-        envs.insert(
-            defs::MSAN_OPTIONS_VAR.to_string(),
-            defs::MSAN_OPTIONS_CONTENT.to_string(),
-        );
-        envs.insert(
-            defs::BRANCHES_SHM_ENV_VAR.to_string(),
-            branches.get_id().to_string(),
-        );
-        envs.insert(
-            defs::COND_STMT_ENV_VAR.to_string(),
-            t_conds.get_id().to_string(),
-        );
-        envs.insert(
-            defs::LD_LIBRARY_PATH_VAR.to_string(),
-            cmd.ld_library.clone(),
-        );
+        envs.insert(defs::ASAN_OPTIONS_VAR.to_string(), defs::ASAN_OPTIONS_CONTENT.to_string());
+        envs.insert(defs::MSAN_OPTIONS_VAR.to_string(), defs::MSAN_OPTIONS_CONTENT.to_string());
+        envs.insert(defs::BRANCHES_SHM_ENV_VAR.to_string(), branches_shm_id.clone());
+        envs.insert(defs::COND_STMT_ENV_VAR.to_string(), t_conds.get_id().to_string());
+        envs.insert(defs::LD_LIBRARY_PATH_VAR.to_string(), cmd.ld_library.clone());
+
+        // Mirror all envs into the current process
+        for (key, val) in &envs {
+            std::env::set_var(key, val);
+        }
+        debug!("Environment variables configured: {:#?}", envs);
+        // let shm_id = branches.get_id();
+        // let trace_ptr = branches.get_trace_ptr();
         
-        let shm_id = branches.get_id();
-        let trace_ptr = branches.get_trace_ptr();
+        // println!("[Executor::new] shm_id={}, trace_ptr={:p}", shm_id, trace_ptr);
         
-        println!("[Executor::new] shm_id={}, trace_ptr={:p}", shm_id, trace_ptr);
-        
-        unsafe { set_angora_area_ptr(trace_ptr) };
+        // unsafe { set_angora_area_ptr(trace_ptr) };
+        unsafe { angora_map_shm(); }
         
         println!("[Executor::new] __angora_area_ptr overridden successfully");
+        // Pipe FD
         let fd = pipe_fd::PipeFd::new(&cmd.out_file);
+        debug!("Pipe FD created for output file: {}", cmd.out_file);
+
+        // Forkserver
+        info!("Starting ...");
+        // let forksrv = Some(forksrv::Forksrv::new(
+        //     &cmd.forksrv_socket_path,
+        //     &cmd.main,
+        //     &envs,
+        //     fd.as_raw_fd(),
+        //     cmd.is_stdin,
+        //     cmd.uses_asan,
+        //     cmd.time_limit,
+        //     cmd.mem_limit,
+        // ));
+        let forksrv: Option<Forksrv>= Option::None;
+        info!(
+            "Forkserver initialized: target={}, socket={}, time_limit={}ms, mem_limit={}MB",
+            cmd.main.0,
+            cmd.forksrv_socket_path,
+            cmd.time_limit,
+            cmd.mem_limit
+        );
 
         Self {
             cmd,
             branches,
             t_conds,
             envs,
-            // forksrv,
+            forksrv,
             depot,
             fd,
             tmout_cnt: 0,
@@ -86,8 +110,28 @@ impl Executor {
             global_stats,
             local_stats: Default::default(),
         }
-    }
+}
 
+    pub fn rebind_forksrv(&mut self) {
+        unsafe { angora_map_shm(); }
+        self.closure();
+        // use closure to clean up
+        // {
+        //     // delete the old forksrv
+        //     self.forksrv = None;
+        // }
+        // let fs = forksrv::Forksrv::new(
+        //     &self.cmd.forksrv_socket_path,
+        //     &self.cmd.main,
+        //     &self.envs,
+        //     self.fd.as_raw_fd(),
+        //     self.cmd.is_stdin,
+        //     self.cmd.uses_asan,
+        //     self.cmd.time_limit,
+        //     self.cmd.mem_limit,
+        // );
+        // self.forksrv = Some(fs);
+    }
 
     // FIXME: The location id may be inconsistent between track and fast programs.
     fn check_consistent(&self, output: u64, cond: &mut cond_stmt::CondStmt) {
@@ -175,7 +219,7 @@ impl Executor {
             self.fd.rewind();
         }
         compiler_fence(Ordering::SeqCst);
-        let unmem_status = self.call_fuzzer();
+        let unmem_status = self.run_target_cmd(&self.cmd.main_fuzz, config::MEM_LIMIT_TRACK, self.cmd.time_limit);
         compiler_fence(Ordering::SeqCst);
 
         // find difference
@@ -254,7 +298,7 @@ impl Executor {
     fn check_timeout(&mut self, status: StatusType, cond: &mut cond_stmt::CondStmt) -> StatusType {
         let mut ret_status = status;
         if ret_status == StatusType::Error {
-            // self.rebind_forksrv();
+            self.rebind_forksrv();
             ret_status = StatusType::Timeout;
         }
 
@@ -272,20 +316,6 @@ impl Executor {
         ret_status
     }
 
-    fn run_inner(&mut self, buf: &Vec<u8>) -> StatusType {
-        self.write_test(buf);
-        self.branches.clear_trace();
-        compiler_fence(Ordering::SeqCst);
-        let ret_status = self.call_fuzzer();
-        // let ret_status = if let Some(ref mut fs) = self.forksrv {
-        //     fs.run()
-        // } else {
-        //     self.run_target(&self.cmd.main, self.cmd.mem_limit, self.cmd.time_limit)
-        // };
-        compiler_fence(Ordering::SeqCst);
-
-        ret_status
-    }
     fn call_fuzzer(&mut self) -> StatusType {
         let ret_status: i32;
         let main_cstr = CString::new(self.cmd.main.0.as_str()).unwrap();
@@ -298,26 +328,48 @@ impl Executor {
         let argv: *mut *mut c_char = args.as_mut_ptr();
         let argc: c_int = (args.len() - 1) as c_int;
         unsafe {
+            angora_reset_shm();
             let result = handle_fuzz(argc, argv);
             ret_status = result;
         }
-        unsafe { close_open_file_handles(); };
-        unsafe { free_ptrs(); };
-        unsafe { handle_closure_reset() };
+        self.closure();
         let status = StatusType::from_handle_fuzz(ret_status);
         status
     }
+    fn closure(&self) {
+        unsafe { close_open_file_handles(); };
+        unsafe { free_ptrs(); };
+        unsafe { handle_closure_reset() };
+    }
+    fn run_inner(&mut self, buf: &Vec<u8>) -> StatusType {
+        self.write_test(buf);
+        self.branches.clear_trace();
+        compiler_fence(Ordering::SeqCst);
+        let ret_status = self.call_fuzzer();
+        // let ret_status = if let Some(ref mut fs) = self.forksrv {
+        //     fs.run()
+        // } else {
+        //     self.run_target(&self.cmd.main, self.cmd.mem_limit, self.cmd.time_limit)
+        // };
+        compiler_fence(Ordering::SeqCst);
+        ret_status
+    }
+
     fn count_time(&mut self) -> u32 {
         let t_start = time::Instant::now();
         for _ in 0..3 {
             if self.cmd.is_stdin {
                 self.fd.rewind();
             }
-            self.call_fuzzer();
+            let status = self.call_fuzzer();
+            if status == StatusType::Error {
+                self.rebind_forksrv();
+                return defs::SLOW_SPEED
+            }
             // if let Some(ref mut fs) = self.forksrv {
             //     let status = fs.run();
             //     if status == StatusType::Error {
-            //         self.rebind_forksrv();
+            //         // self.rebind_forksrv();
             //         return defs::SLOW_SPEED;
             //     }
             // } else {
@@ -399,7 +451,6 @@ impl Executor {
             .pipe_stdin(self.fd.as_raw_fd(), self.cmd.is_stdin)
             .spawn()
             .expect("Could not run target");
-
         let timeout = time::Duration::from_secs(time_limit);
         let ret = match child.wait_timeout(timeout).unwrap() {
             Some(status) => {
