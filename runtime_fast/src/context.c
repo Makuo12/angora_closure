@@ -6,8 +6,10 @@
 
 extern __thread uint32_t __angora_prev_loc;
 extern __thread uint32_t __angora_context;
+extern __thread uint32_t __angora_call_site;
 
 void __angora_reset_context() {
   __angora_prev_loc = 0;
   __angora_context = 0;
+  __angora_call_site = 0;
 }

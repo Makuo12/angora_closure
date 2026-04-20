@@ -13,15 +13,14 @@ mod branches;
 pub mod cond_stmt;
 mod depot;
 pub mod executor;
+mod fuzz_init;
+mod fuzz_loop;
+mod fuzz_main;
+mod fuzz_type;
 mod mut_input;
 mod search;
 mod stats;
 pub mod track;
-
-mod fuzz_loop;
-mod fuzz_main;
-mod fuzz_init;
-mod fuzz_type;
 
 mod bind_cpu;
 mod check_dep;
@@ -34,10 +33,9 @@ unsafe extern "C" {
     unsafe fn handle_closure_reset();
     unsafe fn set_crash_handler();
     unsafe fn handle_fuzz(argc: c_int, argv: *mut *mut c_char) -> c_int;
-    unsafe fn set_angora_area_ptr(ptr: *mut u8);
+    unsafe fn set_angora_area_ptr(ptr: *const u8);
+    unsafe fn set_angora_cmpid(ptr: u32);
+    unsafe fn __angora_reset_context();
     unsafe fn close_open_file_handles();
     unsafe fn free_ptrs();
-    unsafe fn angora_map_shm();
-    unsafe fn angora_reset_shm();
 }
-

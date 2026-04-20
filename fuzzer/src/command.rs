@@ -93,7 +93,7 @@ impl CommandOpt {
             .stdout;
         let clang_lib = String::from_utf8(clang_lib).unwrap();
         let ld_library = "$LD_LIBRARY_PATH:".to_string() + clang_lib.trim();
-        
+
         assert_ne!(
             track_target, "-",
             "You should set track target with -t PROM in LLVM mode!"
@@ -141,7 +141,7 @@ impl CommandOpt {
                 Ok(meta) => {
                     assert!(meta.is_file(), "{:?} is not a file", bin);
                     assert!(meta.mode() & 0o100 != 0, "{:?} is not executable", bin);
-                },
+                }
                 Err(_) => panic!("{:?} doesn't exist", bin),
             };
         }

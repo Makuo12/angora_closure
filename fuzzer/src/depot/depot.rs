@@ -60,10 +60,10 @@ impl Depot {
         match status {
             StatusType::Normal => {
                 Self::save_input(&status, buf, &self.num_inputs, cmpid, &self.dirs.inputs_dir)
-            },
+            }
             StatusType::Timeout => {
                 Self::save_input(&status, buf, &self.num_hangs, cmpid, &self.dirs.hangs_dir)
-            },
+            }
             StatusType::Crash => Self::save_input(
                 &status,
                 buf,
@@ -94,7 +94,7 @@ impl Depot {
             Err(poisoned) => {
                 warn!("Mutex poisoned! Results may be incorrect. Continuing...");
                 poisoned.into_inner()
-            },
+            }
         };
         q.peek()
             .and_then(|x| Some((x.0.clone(), x.1.clone())))
@@ -113,7 +113,7 @@ impl Depot {
             Err(poisoned) => {
                 warn!("Mutex poisoned! Results may be incorrect. Continuing...");
                 poisoned.into_inner()
-            },
+            }
         };
 
         for mut cond in conds {
@@ -149,7 +149,7 @@ impl Depot {
             Err(poisoned) => {
                 warn!("Mutex poisoned! Results may be incorrect. Continuing...");
                 poisoned.into_inner()
-            },
+            }
         };
         if let Some(v) = q.get_mut(&cond) {
             v.0.clone_from(&cond);

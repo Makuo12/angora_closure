@@ -53,9 +53,9 @@ pub fn start_forkcli() {
                     process::exit(1);
                 }
             }
-        },
+        }
         Err(_) => {
             // eprintln!("Could not find socket path");
-        },
+        }
     }
 }

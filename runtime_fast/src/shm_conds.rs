@@ -16,8 +16,8 @@ fn set_cmpid(cid: u32) {
 }
 
 pub struct ShmConds {
-    cond: shm::SHM<CondStmtBase>,
-    rt_order: u32,
+    pub cond: shm::SHM<CondStmtBase>,
+    pub rt_order: u32,
 }
 
 // shm contains pointer..
@@ -36,7 +36,7 @@ impl ShmConds {
                     process::exit(1);
                 }
                 Some(Self { cond, rt_order: 0 })
-            },
+            }
             Err(_) => None,
         }
     }
@@ -80,7 +80,7 @@ impl ShmConds {
 }
 
 lazy_static! {
-    pub static ref SHM_CONDS: Mutex<Option<ShmConds>> = Mutex::new(ShmConds::get_from_env_id());
+    pub static ref SHM_CONDS: Mutex<Option<ShmConds>> = Mutex::new(Option::None);
 }
 
 // #[inline(always)]
@@ -89,17 +89,11 @@ pub fn reset_shm_conds() {
     match conds.deref_mut() {
         &mut Some(ref mut c) => {
             c.reset();
-        },
-        _ => {},
+        }
+        _ => {}
     }
 
     unsafe {
         context::reset_context();
     }
-}
-
-#[unsafe(no_mangle)]
-
-pub extern "C" fn angora_reset_shm() {
-    reset_shm_conds();
 }

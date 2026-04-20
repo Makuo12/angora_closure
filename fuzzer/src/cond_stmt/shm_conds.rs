@@ -1,6 +1,7 @@
 use super::CondOutput;
 use crate::cond_stmt;
 use angora_common::{cond_stmt_base::CondStmtBase, defs, shm};
+use runtime_fast::shm_conds::SHM_CONDS;
 use std;
 
 pub struct ShmConds {
@@ -36,6 +37,7 @@ impl ShmConds {
 
     #[inline(always)]
     pub fn is_cond_reachable(&self) -> bool {
+        info!("cond.lb1 {:?}", self.cond.lb1);
         self.cond.lb1 < std::u32::MAX
     }
 
@@ -50,7 +52,6 @@ impl ShmConds {
             false
         }
     }
-
     pub fn clear(&mut self) {
         self.cond.cmpid = 0;
         self.cond.order = 0;

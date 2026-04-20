@@ -33,5 +33,7 @@ twoway = "0.2.0"
 
 angora_common = {path = "../common" }
 runtime = {path = "../runtime" }
+runtime_fast = {path = "../runtime_fast" }
+
 
 [dev-dependencies]

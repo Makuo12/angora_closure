@@ -14,7 +14,7 @@ fn heapmap_insert(base: HeapPointer, bound: HeapAreaBound) {
         Err(poisoned) => {
             // println!("HEAPMAP lock poisoned. Results may be inconclusive.");
             poisoned.into_inner()
-        },
+        }
     };
     // println!("[+] Inserting ({:x}, {}) into heapmap.", base, bound);
     heapmap.insert(base, bound);
@@ -26,7 +26,7 @@ fn heapmap_remove(base: HeapPointer) {
         Err(poisoned) => {
             // println!("HEAPMAP lock poisoned. Results may be inconclusive.");
             poisoned.into_inner()
-        },
+        }
     };
     // println!("[+] Removing {:x} from heapmap.", base);
     heapmap.remove(&base);
@@ -38,7 +38,7 @@ fn heapmap_retrieve(base: HeapPointer) -> Option<HeapAreaBound> {
         Err(poisoned) => {
             // println!("HEAPMAP lock poisoned. Results may be inconclusive.");
             poisoned.into_inner()
-        },
+        }
     };
     // println!("[+] Retrieving {:x} from heapmap.", base);
     let ret = heapmap.get(&base)?;

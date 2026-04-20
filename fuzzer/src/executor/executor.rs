@@ -1,14 +1,25 @@
 use super::{limit::SetLimit, *};
-
 use crate::{
-    angora_map_shm, angora_reset_shm, branches, close_open_file_handles, command, cond_stmt::{self, NextState}, depot, executor::{forksrv::Forksrv, pipe_fd::PipeFd}, free_ptrs, handle_closure_reset, handle_fuzz, set_angora_area_ptr, stats, track
+    __angora_reset_context, branches::{self, BranchBuf}, close_open_file_handles, command, cond_stmt::{self, NextState}, depot, executor::{pipe_fd::PipeFd}, free_ptrs, handle_closure_reset, handle_fuzz, set_angora_area_ptr, set_angora_cmpid, stats, track
 };
-use angora_common::{config::{self, TIME_LIMIT}, defs};
+use angora_common::{
+    cond_stmt_base::CondStmtBase,
+    config::{self, TIME_LIMIT},
+    defs, shm,
+};
+use runtime_fast::shm_conds::{ShmConds, SHM_CONDS};
 
 use std::{
-    collections::HashMap, ffi::{CString, c_char, c_int}, path::Path, process::{Command, Stdio}, sync::{
-        Arc, RwLock, atomic::{Ordering, compiler_fence}
-    }, time
+    collections::HashMap,
+    ffi::{c_char, c_int, CString},
+    ops::DerefMut,
+    path::Path,
+    process::{Command, Stdio},
+    sync::{
+        atomic::{compiler_fence, Ordering},
+        Arc, RwLock,
+    },
+    time,
 };
 use wait_timeout::ChildExt;
 
@@ -17,7 +28,7 @@ pub struct Executor {
     pub branches: branches::Branches,
     pub t_conds: cond_stmt::ShmConds,
     envs: HashMap<String, String>,
-    forksrv: Option<Forksrv>,
+    // forksrv: Option<Forksrv>,
     depot: Arc<depot::Depot>,
     fd: PipeFd,
     tmout_cnt: usize,
@@ -29,7 +40,6 @@ pub struct Executor {
 }
 
 impl Executor {
-
     pub fn new(
         cmd: command::CommandOpt,
         global_branches: Arc<branches::GlobalBranches>,
@@ -47,60 +57,31 @@ impl Executor {
             t_conds.get_id()
         );
         // ** Envs **
-        let branches_shm_id = branches.get_id().to_string();
-
         let mut envs = HashMap::new();
-        envs.insert(defs::ASAN_OPTIONS_VAR.to_string(), defs::ASAN_OPTIONS_CONTENT.to_string());
-        envs.insert(defs::MSAN_OPTIONS_VAR.to_string(), defs::MSAN_OPTIONS_CONTENT.to_string());
-        envs.insert(defs::BRANCHES_SHM_ENV_VAR.to_string(), branches_shm_id.clone());
-        envs.insert(defs::COND_STMT_ENV_VAR.to_string(), t_conds.get_id().to_string());
-        envs.insert(defs::LD_LIBRARY_PATH_VAR.to_string(), cmd.ld_library.clone());
+        envs.insert(
+            defs::LD_LIBRARY_PATH_VAR.to_string(),
+            cmd.ld_library.clone(),
+        );
 
         // Mirror all envs into the current process
         for (key, val) in &envs {
             std::env::set_var(key, val);
         }
         debug!("Environment variables configured: {:#?}", envs);
-        // let shm_id = branches.get_id();
-        // let trace_ptr = branches.get_trace_ptr();
-        
-        // println!("[Executor::new] shm_id={}, trace_ptr={:p}", shm_id, trace_ptr);
-        
-        // unsafe { set_angora_area_ptr(trace_ptr) };
-        unsafe { angora_map_shm(); }
-        
-        println!("[Executor::new] __angora_area_ptr overridden successfully");
+
         // Pipe FD
         let fd = pipe_fd::PipeFd::new(&cmd.out_file);
         debug!("Pipe FD created for output file: {}", cmd.out_file);
 
         // Forkserver
-        info!("Starting ...");
-        // let forksrv = Some(forksrv::Forksrv::new(
-        //     &cmd.forksrv_socket_path,
-        //     &cmd.main,
-        //     &envs,
-        //     fd.as_raw_fd(),
-        //     cmd.is_stdin,
-        //     cmd.uses_asan,
-        //     cmd.time_limit,
-        //     cmd.mem_limit,
-        // ));
-        let forksrv: Option<Forksrv>= Option::None;
-        info!(
-            "Forkserver initialized: target={}, socket={}, time_limit={}ms, mem_limit={}MB",
-            cmd.main.0,
-            cmd.forksrv_socket_path,
-            cmd.time_limit,
-            cmd.mem_limit
-        );
-
+        info!("Starting single process fuzzer");
+        // let forksrv: Option<Forksrv> = Option::None;
         Self {
             cmd,
             branches,
             t_conds,
             envs,
-            forksrv,
+            // forksrv,
             depot,
             fd,
             tmout_cnt: 0,
@@ -110,10 +91,46 @@ impl Executor {
             global_stats,
             local_stats: Default::default(),
         }
-}
-
+    }
+    pub fn map_branch_counting_shm(&mut self) {
+        // let shm_id = branches.get_id();
+        let branches_shm_var = self.branches.get_id();
+        let mem = shm::SHM::<BranchBuf>::from_id(branches_shm_var);
+        if mem.is_fail() {
+            panic!("memory failed to load");
+        }
+        unsafe { set_angora_area_ptr(self.branches.get_trace_ptr()) };
+    }
+    pub fn reset_shm_conds(&mut self) {
+        let mut conds = SHM_CONDS.lock().expect("SHM mutex poisoned.");
+        match conds.deref_mut() {
+            &mut Some(ref mut c) => {
+                c.rt_order = 0;
+                unsafe {
+                    set_angora_cmpid(c.cond.cmpid);
+                }
+            }
+            _ => {
+                // panic!("SHM_CONDS not initialized");
+            }
+        }
+    }
+    pub fn cond_shm(&mut self) {
+        let cond = shm::SHM::<CondStmtBase>::from_id(self.t_conds.get_id());
+        if cond.is_fail() {
+            panic!("t_cond shm failed");
+        }
+        let mut guard = SHM_CONDS.lock().unwrap();
+        *guard = Some(ShmConds {
+            // <-- replace, not get_or_insert
+            cond,
+            rt_order: 0,
+        });
+    }
     pub fn rebind_forksrv(&mut self) {
-        unsafe { angora_map_shm(); }
+        info!("rebind_forksv");
+        let trace_ptr = self.branches.get_trace_ptr();
+        unsafe { set_angora_area_ptr(trace_ptr) };
         self.closure();
         // use closure to clean up
         // {
@@ -219,7 +236,7 @@ impl Executor {
             self.fd.rewind();
         }
         compiler_fence(Ordering::SeqCst);
-        let unmem_status = self.run_target_cmd(&self.cmd.main_fuzz, config::MEM_LIMIT_TRACK, self.cmd.time_limit);
+        let unmem_status = self.call_fuzzer();
         compiler_fence(Ordering::SeqCst);
 
         // find difference
@@ -327,18 +344,31 @@ impl Executor {
         ];
         let argv: *mut *mut c_char = args.as_mut_ptr();
         let argc: c_int = (args.len() - 1) as c_int;
+        self.reset_shm_conds();
+        unsafe  {
+            __angora_reset_context();
+        }
         unsafe {
-            angora_reset_shm();
             let result = handle_fuzz(argc, argv);
             ret_status = result;
         }
         self.closure();
-        let status = StatusType::from_handle_fuzz(ret_status);
-        status
+        // let exit_code = libc::WEXITSTATUS(ret_status);
+        let signaled = libc::WIFSIGNALED(ret_status);
+        if signaled {
+            debug!("Crash code: {}", ret_status);
+            StatusType::Crash
+        } else {
+            StatusType::Normal
+        }
     }
     fn closure(&self) {
-        unsafe { close_open_file_handles(); };
-        unsafe { free_ptrs(); };
+        unsafe {
+            close_open_file_handles();
+        };
+        unsafe {
+            free_ptrs();
+        };
         unsafe { handle_closure_reset() };
     }
     fn run_inner(&mut self, buf: &Vec<u8>) -> StatusType {
@@ -364,7 +394,7 @@ impl Executor {
             let status = self.call_fuzzer();
             if status == StatusType::Error {
                 self.rebind_forksrv();
-                return defs::SLOW_SPEED
+                return defs::SLOW_SPEED;
             }
             // if let Some(ref mut fs) = self.forksrv {
             //     let status = fs.run();
@@ -465,14 +495,14 @@ impl Executor {
                 } else {
                     StatusType::Crash
                 }
-            },
+            }
             None => {
                 // Timeout
                 // child hasn't exited yet
                 child.kill().expect("Could not send kill signal to child.");
                 child.wait().expect("Error during waiting for child.");
                 StatusType::Timeout
-            },
+            }
         };
         ret
     }

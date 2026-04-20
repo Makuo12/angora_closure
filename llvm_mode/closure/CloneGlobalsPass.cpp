@@ -7,10 +7,13 @@ char CloneGlobalsPass::ID = 0;
 
 void CloneGlobalsPass::cloneGlobals(Module &M)
 {
-    auto &list = M.getGlobalList();
-    for (auto &Global : list)
+    for (auto &Global : M.globals())
     {
-        if (!Global.hasSection() && !Global.isConstant() && !Global.isThreadLocal()) 
+        // Only touch definitions, not external declarations
+        if (!Global.isDeclaration() &&
+            !Global.isConstant() &&
+            !Global.isThreadLocal() &&
+            !Global.hasSection())
         {
             Global.setSection(CLOSURE_GLOBAL_SECTION);
         }

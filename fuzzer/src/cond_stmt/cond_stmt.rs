@@ -73,7 +73,7 @@ impl CondStmt {
                 } else {
                     FuzzType::OtherFuzz
                 }
-            },
+            }
         }
     }
 

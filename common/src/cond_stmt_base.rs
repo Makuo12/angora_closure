@@ -21,6 +21,8 @@ pub struct CondStmtBase {
     pub arg2: u64,
 }
 
+unsafe impl Send for CondStmtBase {}
+
 /*
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct CondStmtMb {

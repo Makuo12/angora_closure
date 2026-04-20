@@ -85,7 +85,7 @@ pub fn load_track_data(
         Result::Err(err) => {
             error!("parse track file error!! {:?}", err);
             vec![]
-        },
+        }
     };
 
     for cond in cond_list.iter_mut() {

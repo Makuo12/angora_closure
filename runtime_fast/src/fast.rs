@@ -21,6 +21,18 @@ pub extern "C" fn __angora_trace_cmp(
     arg1: u64,
     arg2: u64,
 ) -> u32 {
+    let conds = shm_conds::SHM_CONDS.lock().expect("SHM mutex poisoned.");
+    let msg = match conds.as_ref() {
+        Some(c) => format!(
+            "TRACE_CMP: got cmpid={}, context={} | want cmpid={}, context={}, rt_order={}\n",
+            cmpid, context, c.cond.cmpid, c.cond.context, c.rt_order
+    ),
+        None => format!("TRACE_CMP: got cmpid={}, context={} | SHM_CONDS=None\n", cmpid, context),
+    };
+    unsafe {
+        libc::write(2, msg.as_ptr() as *const libc::c_void, msg.len());
+    }
+    drop(conds);
     let mut conds = shm_conds::SHM_CONDS.lock().expect("SHM mutex poisoned.");
     match conds.deref_mut() {
         &mut Some(ref mut c) => {

@@ -34,7 +34,7 @@ pub fn get_log_data_pin(out_f: &Path) -> io::Result<LogData> {
         Ok(file) => file,
         Err(err) => {
             panic!("could not open {:?}: {:?}", out_f, err);
-        },
+        }
     };
 
     let mut buffer = Vec::new();

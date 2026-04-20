@@ -29,7 +29,9 @@ impl<T> SHM<T> {
             ptr,
         }
     }
-
+    pub fn as_ptr(&self) -> *mut T {
+        self.ptr
+    }
     pub fn from_id(id: i32) -> Self {
         let size = std::mem::size_of::<T>() as usize;
         let ptr = unsafe { libc::shmat(id as libc::c_int, std::ptr::null(), 0) as *mut T };

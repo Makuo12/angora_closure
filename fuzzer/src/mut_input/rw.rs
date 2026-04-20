@@ -39,22 +39,22 @@ pub fn set_val_in_buf(buf: &mut Vec<u8>, off: usize, size: usize, val: u64) {
         1 => {
             let v = &mut buf[off];
             *v = val as u8;
-        },
+        }
         2 => {
             let v = unsafe { &mut *(&mut buf[off] as *mut u8 as *mut u16) };
             *v = val as u16;
-        },
+        }
         4 => {
             let v = unsafe { &mut *(&mut buf[off] as *mut u8 as *mut u32) };
             *v = val as u32;
-        },
+        }
         8 => {
             let v = unsafe { &mut *(&mut buf[off] as *mut u8 as *mut u64) };
             *v = val as u64;
-        },
+        }
         _ => {
             panic!("strange arg off and size: {}, {}", off, size);
-        },
+        }
     };
 }
 
@@ -86,7 +86,7 @@ pub fn update_val_in_buf(
                     *v = v.wrapping_sub(delta as u8);
                 }
             }
-        },
+        }
         2 => {
             if sign {
                 let v = unsafe { &mut *(&mut buf[off] as *mut u8 as *mut i16) };
@@ -103,7 +103,7 @@ pub fn update_val_in_buf(
                     *v = v.wrapping_sub(delta as u16);
                 }
             }
-        },
+        }
         4 => {
             if sign {
                 let v = unsafe { &mut *(&mut buf[off] as *mut u8 as *mut i32) };
@@ -120,7 +120,7 @@ pub fn update_val_in_buf(
                     *v = v.wrapping_sub(delta as u32);
                 }
             }
-        },
+        }
         8 => {
             if sign {
                 let v = unsafe { &mut *(&mut buf[off] as *mut u8 as *mut i64) };
@@ -137,9 +137,9 @@ pub fn update_val_in_buf(
                     *v = v.wrapping_sub(delta as u64);
                 }
             }
-        },
+        }
         _ => {
             panic!("strange arg off and size: {}, {}", off, size);
-        },
+        }
     };
 }

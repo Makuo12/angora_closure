@@ -16,20 +16,20 @@ pub fn write_as_ule(val: u64, size: usize) -> Vec<u8> {
     match size {
         1 => {
             wtr.write_u8(val as u8).unwrap();
-        },
+        }
         2 => {
             wtr.write_u16::<LittleEndian>(val as u16).unwrap();
-        },
+        }
         4 => {
             wtr.write_u32::<LittleEndian>(val as u32).unwrap();
-        },
+        }
         8 => {
             wtr.write_u64::<LittleEndian>(val as u64).unwrap();
-        },
+        }
         _ => {
             debug!("wrong size: {:?}", size);
             // panic!("strange arg size: {}", size);
-        },
+        }
     }
 
     wtr

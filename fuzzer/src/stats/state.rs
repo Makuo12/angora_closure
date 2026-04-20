@@ -40,22 +40,22 @@ impl StateStats {
         match cond.state {
             CondState::Offset | CondState::OffsetOpt | CondState::OffsetAll => {
                 self.normal.count(is_done);
-            },
+            }
             CondState::OffsetAllEnd => {
                 self.normal_end.count(is_done);
-            },
+            }
             CondState::OneByte => {
                 self.one_byte.count(is_done);
-            },
+            }
             CondState::Unsolvable => {
                 self.unsolvable.count(is_done);
-            },
+            }
             CondState::Deterministic => {
                 self.det.count(is_done);
-            },
+            }
             CondState::Timeout => {
                 self.timeout.count(is_done);
-            },
+            }
         }
     }
 }

@@ -3,7 +3,6 @@ members = [
         "common",
         "fuzzer",
         "runtime_fast",
-        "main_fuzzer",
         "runtime",
         "closure"
 ]

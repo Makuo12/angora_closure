@@ -26,7 +26,6 @@ impl CondOutput for CondStmtBase {
         if op == defs::COND_SW_OP {
             op = defs::COND_ICMP_EQ_OP;
         }
-
         // if its condition is true, we want its opposite constraint.
         if self.is_explore() && self.condition == defs::COND_TRUE_ST {
             op = match op {
@@ -51,7 +50,7 @@ impl CondOutput for CondStmtBase {
             defs::COND_ICMP_EQ_OP => {
                 // a == b : f = abs(a - b)
                 sub_abs(a, b)
-            },
+            }
             defs::COND_ICMP_NE_OP => {
                 // a != b :
                 // f = 0 if a != b, and f = 1 if a == b
@@ -60,7 +59,7 @@ impl CondOutput for CondStmtBase {
                 } else {
                     0
                 }
-            },
+            }
             defs::COND_ICMP_SGT_OP | defs::COND_ICMP_UGT_OP => {
                 // a > b :
                 // f = 0 if a > b, and f = b - a + e if a <= b
@@ -69,7 +68,7 @@ impl CondOutput for CondStmtBase {
                 } else {
                     b - a + EPS
                 }
-            },
+            }
             defs::COND_ICMP_UGE_OP | defs::COND_ICMP_SGE_OP => {
                 // a > = b
                 // f = 0 if a >= b, and f = b - a if a < b
@@ -78,7 +77,7 @@ impl CondOutput for CondStmtBase {
                 } else {
                     b - a
                 }
-            },
+            }
             defs::COND_ICMP_ULT_OP | defs::COND_ICMP_SLT_OP => {
                 // a < b :
                 // f = 0 if a < b, and f = a - b + e if a >= b
@@ -87,7 +86,7 @@ impl CondOutput for CondStmtBase {
                 } else {
                     a - b + EPS
                 }
-            },
+            }
             defs::COND_ICMP_ULE_OP | defs::COND_ICMP_SLE_OP => {
                 // a < = b
                 // f = 0 if a <= b, and f = a - b if a > b
@@ -96,12 +95,12 @@ impl CondOutput for CondStmtBase {
                 } else {
                     a - b
                 }
-            },
+            }
             _ => {
                 //TODO : support float.
                 // if self.is_float() {
                 sub_abs(a, b)
-            },
+            }
         };
 
         debug!(
@@ -134,7 +133,7 @@ fn translate_signed_value(v: u64, size: u32) -> u64 {
                 // [0, 127] -> [128, 255]
                 v + (std::i8::MAX as u64 + 1)
             }
-        },
+        }
 
         2 => {
             let mut s = v as i16;
@@ -145,7 +144,7 @@ fn translate_signed_value(v: u64, size: u32) -> u64 {
             } else {
                 v + (std::i16::MAX as u64 + 1)
             }
-        },
+        }
 
         4 => {
             let mut s = v as i32;
@@ -156,7 +155,7 @@ fn translate_signed_value(v: u64, size: u32) -> u64 {
             } else {
                 v + (std::i32::MAX as u64 + 1)
             }
-        },
+        }
 
         8 => {
             let mut s = v as i64;
@@ -167,7 +166,7 @@ fn translate_signed_value(v: u64, size: u32) -> u64 {
             } else {
                 v + (std::i64::MAX as u64 + 1)
             }
-        },
+        }
 
         _ => v,
     }

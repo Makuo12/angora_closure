@@ -1,28 +1,25 @@
-use std::{collections::HashMap, env, fs, io::Write, path::{self, Path, PathBuf}, sync::{Arc, RwLock, atomic::{AtomicBool, AtomicUsize, Ordering}}, thread, time};
+use std::{collections::HashMap, fs, io::Write, path::{Path, PathBuf}, sync::{Arc, RwLock, atomic::{AtomicBool, AtomicUsize, Ordering}}, thread, time};
 
-use angora_common::{config::{MEM_LIMIT, TIME_LIMIT}, defs};
+use angora_common::{config::TIME_LIMIT, defs};
 use chrono::Local;
 use log::{error, info};
-use runtime::track;
 
-use crate::{bind_cpu, branches::{self, GlobalBranches}, check_dep, command::{self, CommandOpt}, depot::{self, Depot, sync_depot}, executor::{self, Executor}, fuzz_loop::{self, fuzz_loop}, handle_closure_init, set_crash_handler, stats::{self, ChartStats, show_stats}};
+use crate::{bind_cpu, branches::{self}, check_dep, command::{self, CommandOpt}, depot::{self}, executor::{self, Executor}, fuzz_loop::{self}, fuzz_main::Args, handle_closure_init, stats::{self, show_stats}};
 
-pub fn fuzz_init() {
+pub fn fuzz_init(argc: i32, argv: Args) {
     pretty_env_logger::init();
-    let out_dir = "angora_out";
-    let cwd = env::current_dir().unwrap();
-    let in_dir = cwd.join("../pdf").to_str().unwrap().to_string();
-    let track_path = cwd.join("../build_track/pdftotext.taint").to_str().unwrap().to_string();
+    info!("Args: {:?}", argv);
+    let input_dir: String = argv.input_dir.unwrap();
+    let output_dir: String = argv.output_dir.unwrap();
     let (seeds_dir, angora_out_dir) = initialize_directories(
-        &in_dir, out_dir, false
+        &input_dir, &output_dir, false
     );
-    let fast_path = cwd.join("../build_fast/pdftotext.fast").to_str().unwrap().to_string();
-    let fast_main_path = cwd.join("../build_main/pdftotext.fast").to_str().unwrap().to_string();
+    info!("Seeds dir: {:?}, Angora out dir: {:?}", seeds_dir, angora_out_dir);
     let command_option = CommandOpt::new(
-        "llvm",
-        &track_path,
-        &fast_main_path,
-        vec![fast_path, "@@".to_string()],  // binary + input placeholder
+        argv.mode.unwrap().as_str(),
+        argv.track_target.unwrap().as_str(),
+        argv.normal_target.unwrap().as_str(),
+        vec![argv.fast_target.unwrap(), "@@".to_string()],  // binary + input placeholder
         &angora_out_dir,
         "gd",
         0,
@@ -34,7 +31,7 @@ pub fn fuzz_init() {
     unsafe {
         handle_closure_init();
     }
-    check_dep::check_dep(&in_dir, &angora_out_dir.to_str().unwrap(), &command_option);
+    check_dep::check_dep(&input_dir, &angora_out_dir.to_str().unwrap(), &command_option);
     let depot = Arc::new(depot::Depot::new(seeds_dir, &angora_out_dir));
     info!("{:?}", depot.dirs);
     let stats = Arc::new(RwLock::new(stats::ChartStats::new()));
@@ -48,6 +45,9 @@ pub fn fuzz_init() {
         depot.clone(),
         stats.clone(),
     );
+    executor.map_branch_counting_shm();
+    executor.cond_shm();
+    executor.reset_shm_conds();
     depot::sync_depot(&mut executor, running.clone(), &depot.dirs.seeds_dir);
     if depot.empty() {
         error!("Failed to find any branches during dry run.");
@@ -58,11 +58,12 @@ pub fn fuzz_init() {
         );
         panic!();
     }
-    let (handles, child_count) = init_cpus_and_run_fuzzing_threads(
+    let (handle, child_count) = init_cpus_and_run_fuzzing_threads(
         Option::None,
         1,
         &running,
         &command_option,
+        executor,
         &global_branches,
         &depot,
         &stats,
@@ -76,20 +77,23 @@ pub fn fuzz_init() {
     };
     main_thread_sync_and_log(
         log_file,
-        out_dir,
+        &output_dir,
         false,
         running.clone(),
-        &mut executor,
+        // &mut executor,
         &depot,
         &global_branches,
         &stats,
         child_count,
     );
-    for handle in handles {
-        if handle.join().is_err() {
-            error!("Error happened in fuzzing thread!");
-        }
+    if handle.join().is_err() {
+        panic!("error at join");
     }
+    // for handle in handles {
+    //     if handle.join().is_err() {
+    //         error!("Error happened in fuzzing thread!");
+    //     }
+    // }
     match fs::remove_file(&fuzzer_stats) {
         Ok(_) => (),
         Err(e) => warn!("Could not remove fuzzer stats file: {:?}", e),
@@ -147,12 +151,12 @@ fn init_cpus_and_run_fuzzing_threads(
     num_jobs: usize,
     running: &Arc<AtomicBool>,
     command_option: &command::CommandOpt,
+    executor: Executor,
     global_branches: &Arc<branches::GlobalBranches>,
     depot: &Arc<depot::Depot>,
     stats: &Arc<RwLock<stats::ChartStats>>,
-) -> (Vec<thread::JoinHandle<()>>, Arc<AtomicUsize>) {
+) -> (thread::JoinHandle<()>, Arc<AtomicUsize>) {
     let child_count = Arc::new(AtomicUsize::new(0));
-    let mut handlers = vec![];
     let free_cpus = match bind {
         None => bind_cpu::find_free_cpus(num_jobs),
         Some(start_cid) => {
@@ -167,24 +171,21 @@ fn init_cpus_and_run_fuzzing_threads(
     } else {
         true
     };
-    for thread_id in 0..num_jobs {
-        let c = child_count.clone();
-        let r = running.clone();
-        let cmd = command_option.specify(thread_id + 1);
-        let d = depot.clone();
-        let b = global_branches.clone();
-        let s = stats.clone();
-        let cid = if bind_cpus { free_cpus[thread_id] } else { 0 };
-        let handler = thread::spawn(move || {
-            c.fetch_add(1, Ordering::SeqCst);
-            if bind_cpus {
-                bind_cpu::bind_thread_to_cpu_core(cid);
-            }
-            fuzz_loop::fuzz_loop(r, cmd, d, b, s);
-        });
-        handlers.push(handler);
-    }
-    (handlers, child_count)
+    let c = child_count.clone();
+    let r = running.clone();
+    let cmd = command_option.specify(0 + 1);
+    let d = depot.clone();
+    let b = global_branches.clone();
+    let s = stats.clone();
+    let cid = if bind_cpus { free_cpus[0]} else { 0 };
+    let handler = thread::spawn(move || {
+        c.fetch_add(1, Ordering::SeqCst);
+        if bind_cpus {
+            bind_cpu::bind_thread_to_cpu_core(cid);
+        }
+        fuzz_loop::fuzz_loop(r, cmd, d, b, s);
+    });
+    (handler, child_count)
 }
 
 
@@ -193,7 +194,7 @@ fn main_thread_sync_and_log(
     out_dir: &str,
     sync_afl: bool,
     running: Arc<AtomicBool>,
-    executor: &mut executor::Executor,
+    // executor: &mut executor::Executor,
     depot: &Arc<depot::Depot>,
     global_branches: &Arc<branches::GlobalBranches>,
     stats: &Arc<RwLock<stats::ChartStats>>,

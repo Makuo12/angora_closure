@@ -40,34 +40,49 @@ void handle_closure_init(void)
     {
         fprintf(stderr, "Error: Could not find section __DATA,__cls_glob\n");
         return;
+    } else {
+        addr = (unsigned long)section_addr;
+        size = section_size;
+        printf("Runtime Address: %p\n", (void *)section_addr);
+        printf("Section Size:    %lu bytes\n", size);
+
+        copy_memory = malloc(size);
+        if (!copy_memory)
+        {
+            perror("malloc");
+            return;
+        }
+        memcpy(copy_memory, section_addr, size);
+        reset_globals = 1;
     }
 #elif __linux__
-        extern char __start___cls_glob[] __attribute__((weak));
+    extern char __start___cls_glob[] __attribute__((weak));
     extern char __stop___cls_glob[] __attribute__((weak));
 
     if (__start___cls_glob == NULL || __start___cls_glob == __stop___cls_glob)
     {
         fprintf(stderr, "Error: Could not find section .cls_glob\n");
         return;
+    } else {
+        uint8_t *section_addr = (uint8_t *)__start___cls_glob;
+        unsigned long section_size = (unsigned long)(__stop___cls_glob - __start___cls_glob);
+        addr = (unsigned long)section_addr;
+        size = section_size;
+
+        printf("Runtime Address: %p\n", (void *)section_addr);
+        printf("Section Size:    %lu bytes\n", size);
+
+        copy_memory = malloc(size);
+        if (!copy_memory)
+        {
+            perror("malloc");
+            return;
+        }
+        memcpy(copy_memory, section_addr, size);
+        reset_globals = 1;
     }
-    uint8_t *section_addr = (uint8_t *)__start___cls_glob;
-    unsigned long section_size = (unsigned long)(__stop___cls_glob - __start___cls_glob);
 #endif
 
-    addr = (unsigned long)section_addr;
-    size = section_size;
-
-    printf("Runtime Address: %p\n", (void *)section_addr);
-    printf("Section Size:    %lu bytes\n", size);
-
-    copy_memory = malloc(size);
-    if (!copy_memory)
-    {
-        perror("malloc");
-        return;
-    }
-    memcpy(copy_memory, section_addr, size);
-    reset_globals = 1;
 }
 
 void restore_global_sections(char *target, char *source, int len)
@@ -101,24 +116,6 @@ void handle_closure_reset(void)
 
 void crash_handler(int sig)
 {
-    switch (sig)
-    {
-    case SIGSEGV:
-        printf("segfault\n");
-        break;
-    case SIGBUS:
-        printf("bus error\n");
-        break;
-    case SIGFPE:
-        printf("arithmetic error\n");
-        break;
-    case SIGILL:
-        printf("illegal instruction\n");
-        break;
-    default:
-        printf("unknown signal %d\n", sig);
-        break;
-    }
     siglongjmp(env, sig);
 }
 
@@ -128,56 +125,50 @@ void set_crash_handler(void)
     struct sigaction sa;
     sa.sa_handler = crash_handler;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_NODEFER; /* persist across longjmp, don't reset after firing */
+    sa.sa_flags = SA_NODEFER;
     sigaction(SIGSEGV, &sa, NULL);
     sigaction(SIGFPE, &sa, NULL);
     sigaction(SIGBUS, &sa, NULL);
     sigaction(SIGTRAP, &sa, NULL);
     sigaction(SIGILL, &sa, NULL);
-
-    // sigaction(SIGABRT, &sa, NULL);
+    sigaction(SIGABRT, &sa, NULL);
 }
-
 
 int handle_fuzz(int argc, char *argv[])
 {
     int result = 0;
     int saved_stderr = -1;
     int saved_stdout = -1;
-    mkdir("/tmp/my_angora_log", 0777);
-    int fd = open("/tmp/my_angora_log/target_stderr.log", O_CREAT | O_WRONLY, 0666);
-    if (fd >= 0)
+
+    int devnull = open("/dev/null", O_WRONLY);
+    if (devnull >= 0)
     {
         saved_stderr = dup(STDERR_FILENO);
-        dup2(fd, STDERR_FILENO);
-        close(fd);
-    }
-    int fd_out = open("/tmp/my_angora_log/target_stdout.log", O_CREAT | O_WRONLY, 0666);
-    if (fd_out >= 0)
-    {
         saved_stdout = dup(STDOUT_FILENO);
-        dup2(fd_out, STDOUT_FILENO);
-        close(fd_out);
+        dup2(devnull, STDERR_FILENO);
+        dup2(devnull, STDOUT_FILENO);
+        close(devnull);
     }
+
     int sig = sigsetjmp(env, 1);
     if (sig != 0)
     {
-        printf("sig %d", sig);
-        result = sig;
+        result = (sig & 0x7f);
     }
     else
     {
         result = target_main(argc, argv);
+        result = (result & 0xff) << 8;
     }
 
-    // Restore ALWAYS — whether normal return or longjmp
-    if (saved_stderr >= 0) // ← use saved_stderr not fd
+    if (saved_stderr >= 0)
     {
         dup2(saved_stderr, STDERR_FILENO);
         close(saved_stderr);
         saved_stderr = -1;
     }
-    if (saved_stdout >= 0) {
+    if (saved_stdout >= 0)
+    {
         dup2(saved_stdout, STDOUT_FILENO);
         close(saved_stdout);
         saved_stdout = -1;
@@ -185,6 +176,7 @@ int handle_fuzz(int argc, char *argv[])
 
     return result;
 }
+
 void exitHook(int status)
 {
     siglongjmp(env, status != 0 ? status : -1);

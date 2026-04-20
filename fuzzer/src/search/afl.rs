@@ -130,7 +130,7 @@ impl<'a> AFLFuzz<'a> {
                     let byte_idx: u32 = rng.gen_range(0, byte_len);
                     let bit_idx: u32 = rng.gen_range(0, 8);
                     buf[byte_idx as usize] ^= 128 >> bit_idx;
-                },
+                }
                 2 | 3 => {
                     //add or sub
                     let n: u32 = rng.gen_range(0, 3);
@@ -148,7 +148,7 @@ impl<'a> AFLFuzz<'a> {
                             v as u64,
                         );
                     }
-                },
+                }
                 4 => {
                     // set interesting value
                     let n: u32 = rng.gen_range(0, 3);
@@ -159,13 +159,13 @@ impl<'a> AFLFuzz<'a> {
                         let wh = rng.gen_range(0, vals.len() as u32);
                         mut_input::set_val_in_buf(buf, byte_idx as usize, size, vals[wh as usize]);
                     }
-                },
+                }
                 5 => {
                     // random byte
                     let byte_idx: u32 = rng.gen_range(0, byte_len);
                     let val: u8 = rng.gen();
                     buf[byte_idx as usize] = val;
-                },
+                }
                 6 => {
                     // delete bytes
                     let remove_len: u32 = rng.gen_range(1, 5);
@@ -177,7 +177,7 @@ impl<'a> AFLFuzz<'a> {
                             buf.remove(byte_idx as usize);
                         }
                     }
-                },
+                }
                 7 => {
                     // insert bytes
                     let add_len = rng.gen_range(1, 5);
@@ -189,8 +189,8 @@ impl<'a> AFLFuzz<'a> {
                             buf.insert((byte_idx + i) as usize, rng.gen());
                         }
                     }
-                },
-                _ => {},
+                }
+                _ => {}
             }
         }
     }

@@ -85,9 +85,8 @@ impl Branches {
     pub fn get_id(&self) -> i32 {
         self.trace.get_id()
     }
-    pub fn get_trace_ptr(&mut self) -> *mut u8 {
-        let ptr = self.trace.as_mut_ptr();
-        println!("[get_trace_ptr] ptr={:p}", ptr);
+    pub fn get_trace_ptr(&mut self) -> *const u8 {
+        let ptr = self.trace.get_ptr() as *const u8;
         ptr
     }
     fn get_path(&self) -> Vec<(usize, u8)> {
@@ -130,9 +129,8 @@ impl Branches {
             StatusType::Timeout => &self.global.tmouts_branches,
             StatusType::Crash => &self.global.crashes_branches,
             _ => {
-                println!("[has_new] unsupported status, returning early");
                 return (false, false, 0);
-            },
+            }
         };
         let path = self.get_path();
         let edge_num = path.len();
