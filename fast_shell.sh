@@ -57,5 +57,5 @@ cmake -DCMAKE_BUILD_TYPE=Release \
 make pdftotext -j$(nproc)
 cd ../..
 
-mkdir -p build_fast
-cp ./xpdf-4.06_2/build_fast/xpdf/pdftotext build_fast/pdftotext.fast
+mkdir -p build_main
+cp ./xpdf-4.06_2/build_fast/xpdf/pdftotext build_main/pdftotext.fast

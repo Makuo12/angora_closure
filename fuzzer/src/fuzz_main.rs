@@ -26,7 +26,7 @@ impl Args {
     }
 }
 
-// ./switch2.fast -m llvm -i ../input -o ../output -t ./switch2.taint -f ./switch2.fast -n ./switch2_main.fast
+// ./gep.fast -m llvm -i ../input -o ../output -t ./gep.taint -f ./gep.fast -n ./gep_main.fast
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rust_fuzz_init(argc: c_int, argv: *const *const char) {

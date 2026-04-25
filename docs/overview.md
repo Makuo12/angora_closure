@@ -17,7 +17,6 @@ input will affect which branch constraint. Then mutations will be applied to
 the input with the tainted parts in consideration. This allows for efficient
 and precise input generation which significantly increases input coverage.
 
-**More details are available in the published works**
 
 ## Directory Structure
 
@@ -33,8 +32,13 @@ and precise input generation which significantly increases input coverage.
   - `src/track`: Parse taint analysis result.
   - `src/stats`: Statistical chart.
   - `src/branches`: Branch counting.
+- `global_mem.c`: Manages global variable state for fuzzing. It copies initial global variable values from a special section and restores them after each target execution to ensure isolation. Includes handle_fuzz(), which calls the target's main function (renamed to target_main() via LLVM pass), handles crashes with signal jumps, and suppresses stdout/stderr.
+- `angora_main_fuzz.c`: Serves as the fuzzer's entry point. Defines angora_fuzz_main() (renamed to main() at compile time via LLVM pass), which initializes Rust fuzzing logic. Also provides functions to set the comparison ID and area pointer for Angora's instrumentation.
 - `llvm_mode`: Includes source code for instrumenting compilers and DFSan, the taint tracking framework.
-- `pin_mode`: Includes source code for instrumenting based on Intel Pin.
+- `llvm_mode/closure`: This directory holds the llvm passes for closure.
+- `closure/src`: Closure module for housing all closure function (myMalloc, myRealloc, fopen_hook etc...) for tracking used pointers and performing clean up of those pointers on an exit of the target.
+- `track_shell.sh`: Builds the target with Angora + DFSan tracking passes, producing a taint-enabled binary (build_main/pdftotext.taint).
+- `fast_shell.sh`: Builds the target with Angora and closure passes, links it with Angora/closure runtime libraries and the fused fuzzer object, and produces the final fast fuzzing binary (build_main/pdftotext.fast).
 - `runtime`: Taint tracking runtime library for target program.
 - `runtime_fast`: Branch and constraint information collection library for target program.
 - `tests`: Sample tests to evaluate fuzzer performance.

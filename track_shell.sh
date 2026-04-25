@@ -14,5 +14,6 @@ USE_TRACK=1 cmake \
 
 USE_TRACK=1 make pdftotext -j$(nproc)
 cd ../..
-mkdir -p build_track
-cp ./xpdf-4.06_2/build_track/xpdf/pdftotext build_track/pdftotext.taint
+
+mkdir -p build_main
+cp ./xpdf-4.06_2/build_track/xpdf/pdftotext build_main/pdftotext.taint

@@ -153,6 +153,7 @@ int handle_fuzz(int argc, char *argv[])
     int sig = sigsetjmp(env, 1);
     if (sig != 0)
     {
+        // printf("Program crashed with signal %d\n", sig);
         result = (sig & 0x7f);
     }
     else

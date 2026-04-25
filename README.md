@@ -4,9 +4,9 @@
 
 **Angora Closure** is a project that combines the effectiveness and efficiency of the Angora taint tracking algorithm while replacing its fork server (used for fast mode execution) with a persistent-style fuzzer.
 
-This is achieved using an LLVM pass that replaces the target program’s `main` function with a custom-defined entry point. The custom `main` directly invokes the Angora fuzzing loop and replaces the fork server mechanism with direct calls to the target’s original `main`, enabling repeated execution of test cases within a single process.
+This is achieved using an LLVM pass that replaces the target program’s `main` function with a custom-defined entry point. The custom `main` directly invokes the Angora fuzzing loop and replaces the fork server mechanism with direct calls to the target’s original `main`, enabling repeated execution of test cases within a single process. This is implemented using the LLVM passes in llvm_mode
 
-To address inconsistent program states caused by persistent fuzzing, this project introduces **ClosureX**. ClosureX logs changes to the program state during execution (e.g., modified global variables) and restores them before executing the next test case.
+To address inconsistent program states caused by persistent fuzzing, this project introduces **ClosureX**. ClosureX keeps track of changes to the program state during execution (e.g., global variables, heap memory) and restores them before executing the next test case. This is implemented using the LLVM pass located in ./llvm_mode/closure
 
 ## Design
 
@@ -30,12 +30,15 @@ Angora then uses this result to guide subsequent fuzzing iterations as usual.
 
 The taint-tracking binary is still executed using Angora’s original process-based approach. This implementation is preserved because:
 
+* It is created by calling fork()/exec()
 * It is only invoked occasionally
 * It has minimal performance impact
 
 ---
 
 ## Usage
+
+To learn more about scripts files, closure pass, angora pass, check the [Overview](./docs/overview.md)
 
 ### 1. Angora Closure Fuzzer
 
@@ -49,60 +52,36 @@ docker compose exec xpdf-angora /bin/bash
 #### Inside the Container
 
 ```bash
-./angora_shell.sh
+./shell.sh
 ```
 
 This will:
 
 * Build both the **fast binary** and the **track binary**
-* Start the fuzzer
+
+#### Start fuzzing
+
+-m is the Mode
+-i is the input directory
+-o is the output directory
+-t is the path to the taint binary
+-f is the path to the fast binary
+RUST_LOG=trace helps to see the trace logs (info, debug)
+
+```bash
+cd /angora_closure/build_main
+```
+
+```bash
+RUST_LOG=trace ./pdftotext.fast -m llvm -i ../pdf -o ./angora_out -t ./pdftotext.taint -f ./pdftotext.fast
+```
 
 #### Output
 
 Results are stored in:
 
 ``` bash
-angora_out
-```
-
----
-
-### 2. Fuzzer with Closure (No Angora)
-
-This project can also run without Angora using a standard mutation-based fuzzer.
-
-Mutation strategies include:
-
-* Bit flips
-* Byte flips
-* Add/subtract operations
-
-This version still uses a **persistent fuzzer**, and ClosureX is used to maintain consistent program state.
-
-#### Build and Start Container (Normal-Based)
-
-```bash
-docker compose up xpdf-normal -d
-docker compose exec xpdf-normal /bin/bash
-```
-
-#### Inside the Container (Normal-Based)
-
-```bash
-cd build_normal && ./pdtotext /tmp/normal_out/source.pdf
-```
-
-This will:
-
-* Build required binaries
-* Start the fuzzer
-
-#### Output (Normal-Based)
-
-Results are stored in:
-
-``` bash
-/tmp/normal_out
+cd ./angora_out
 ```
 
 ---
@@ -118,7 +97,7 @@ Results are stored in:
 
 ## Limitations
 
-It currently only works with the xpdf source code. Using other source code would require configuration changes to the shell scripts.
+It currently only works with the xpdf source code. Using other source code would require configuration changes to the shell scripts. Pin mode has not been tested yet.
 
 ## References
 

@@ -21,13 +21,13 @@ bin_dir=../bin/
 USE_TRACK=1 ${bin_dir}/angora-clang ${target}.c -lz -o ${target}.taint
 USE_FAST=1 ${bin_dir}/angora-clang ${target}.c -lz -o ${target}_main.fast
 
-FUZZ_MAIN_A=../angora_main_fuzz.a
+FUZZ_MAIN_A=./angora_main_fuzz.a
 ANGORA_PATH=../bin
 
 /clang+llvm/bin/clang \
         -Xclang -load -Xclang ${ANGORA_PATH}/pass/closure.so \
         -pie -fpic -g -O3 \
-        -c -o angora_main_fuzz.o ./angora_main_fuzz.c 
+        -c -o angora_main_fuzz.o ../angora_main_fuzz.c 
 
 ld -r \
         angora_main_fuzz.o \
@@ -69,3 +69,6 @@ LINK_FLAGS="\
     ${target}.o \
     ${LINK_FLAGS} \
     -o ${target}.fast
+
+# to use
+# ./clousure_test.sh ${name}

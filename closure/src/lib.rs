@@ -1,5 +1,3 @@
-mod my_constants;
-
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -80,7 +78,7 @@ pub unsafe extern "C" fn myFree(ptr: *mut c_void) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn free_ptrs() {
     PTR.with(|map| {
-        let count = map.borrow().len();
+        // let count = map.borrow().len();
         // println!("free_ptrs: cleaning up {} pointers", count);
         for (key, _) in map.borrow_mut().drain() {
             unsafe { libc::free(key.0) };
@@ -95,6 +93,7 @@ pub unsafe extern "C" fn fopen_hook(pathname: *const c_char, mode: *const c_char
         return std::ptr::null_mut();
     }
     PTR_FILE.with(|map| {
+        // println!("fopen_hook: opened file handle {:p}", fp);
         map.borrow_mut().insert(KeyFile(fp), true);
     });
     fp
@@ -114,9 +113,10 @@ pub unsafe extern "C" fn fclose_hook(fp: *mut FILE) -> c_int {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn close_open_file_handles() {
     PTR_FILE.with(|map| {
-        let count = map.borrow().len();
+        // let count = map.borrow().len();
         // println!("close_open_file_handles: closing {} file handles", count);
         for (key, _) in map.borrow_mut().drain() {
+            // println!("fopen_hook: opened file handle {:p}", key.0);
             unsafe { libc::fclose(key.0) };
         }
     });

@@ -39,7 +39,7 @@ pub struct CommandOpt {
     pub id: usize,
     pub main: (String, Vec<String>),
     pub track: (String, Vec<String>),
-    pub main_fuzz: (String, Vec<String>),
+    pub main_fuzz: Option<(String, Vec<String>)>,
     pub tmp_dir: PathBuf,
     pub out_file: String,
     pub forksrv_socket_path: String,
@@ -59,7 +59,7 @@ impl CommandOpt {
     pub fn new(
         mode: &str,
         track_target: &str,
-        main_target: &str,
+        main_target: Option<&str>,
         pargs: Vec<String>,
         out_dir: &Path,
         search_method: &str,
@@ -134,8 +134,11 @@ impl CommandOpt {
             track_bin = track_target.to_string();
             track_args = main_args.clone();
         }
-        let main_fuzz_bin = main_target.to_string();
-        let main_fuzz_args = main_args.clone();
+        let mut main_fuzz_data: Option<(String, Vec<String>)> = Option::None;
+        if main_target.is_some() {
+            let main_fuzz_args = main_args.clone();
+            main_fuzz_data = Some((main_target.unwrap().to_string(), main_fuzz_args));
+        }
         for bin in [&main_bin, &track_bin].iter() {
             match fs::metadata(bin) {
                 Ok(meta) => {
@@ -145,13 +148,12 @@ impl CommandOpt {
                 Err(_) => panic!("{:?} doesn't exist", bin),
             };
         }
-
         Self {
             mode,
             id: 0,
             main: (main_bin, main_args),
             track: (track_bin, track_args),
-            main_fuzz: (main_fuzz_bin, main_fuzz_args),
+            main_fuzz: main_fuzz_data,
             tmp_dir,
             out_file: out_file,
             forksrv_socket_path,

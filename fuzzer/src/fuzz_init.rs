@@ -18,7 +18,7 @@ pub fn fuzz_init(argc: i32, argv: Args) {
     let command_option = CommandOpt::new(
         argv.mode.unwrap().as_str(),
         argv.track_target.unwrap().as_str(),
-        argv.normal_target.unwrap().as_str(),
+        argv.normal_target.as_ref().map(|s| s.as_str()),
         vec![argv.fast_target.unwrap(), "@@".to_string()],  // binary + input placeholder
         &angora_out_dir,
         "gd",

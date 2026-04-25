@@ -10,7 +10,6 @@ configuration result can be used across both compile processes, thus one would
 only need to store one compiled version elsewhere before compiling the other 
 version.
 
-We have also added support for wllvm.
 
 ### Makefile
 
